@@ -184,9 +184,7 @@ You should see JSON output describing the current Blender scene.
 
 Open the OpenClaw web UI (the URL from `openclaw gateway run` output) and try prompts like:
 
-- "Create a red cube in the center of the scene"
-- "Add a blue sphere next to the cube"
-- "What objects are in the Blender scene right now?"
+- "Using mcporter to connect to blender, create a red cube in the center of the blender scene"
 
 ## Troubleshooting
 
