@@ -7,7 +7,7 @@ This guide walks you through giving an OpenClaw agent access to Gmail, Calendar,
 | Requirement | Details |
 |-------------|---------|
 | Running OpenClaw sandbox | A working OpenShell sandbox with OpenClaw. See [NemoClaw hello-world setup](https://github.com/NVIDIA/NemoClaw). |
-| GCP OAuth credentials | A client secret JSON file downloaded from [Google Cloud Console](https://console.cloud.google.com) — see [Getting the GCP OAuth credentials JSON](gogcli-skill/README.md#getting-the-gcp-oauth-credentials-json) in `gogcli-skill/README.md`. |
+| GCP OAuth credentials | A client secret JSON file downloaded from [Google Cloud Console](https://console.cloud.google.com) — see [Getting the GCP OAuth credentials JSON](gogcli-skill/README.md#getting-the-gcp-oauth-credentials-json). |
 | Go toolchain | Go 1.21+ (installed automatically by `bootstrap.sh` if missing). |
 
 ## Part 1: Bootstrap (Build, Credentials, Token Server, Sandbox)

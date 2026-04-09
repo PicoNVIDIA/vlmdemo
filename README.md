@@ -8,6 +8,7 @@ A repository of guides with examples you can take after a successful [hello-worl
 |------|-------------|
 | [**vlm-demo**](vlm-demo/vlm-subagent-guide.md) | Zero-to-hero cookbook for adding a Vision Language Model (VLM) sub-agent to OpenClaw using Nemotron Omni. No GPU required. |
 | [**blender-demo**](blender-demo/blender-openclaw-guide.md) | Connecting Blender to OpenClaw for natural language 3D interactions via MCP. |
+| [**gog-demo**](gog-demo/gog-openclaw-guide.md) | Connecting Google Workspace (Gmail, Calendar, Drive) to OpenClaw via the `gog` CLI. |
 
 ## Official Resources
 
