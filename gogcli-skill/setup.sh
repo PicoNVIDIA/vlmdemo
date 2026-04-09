@@ -132,6 +132,7 @@ start_token_server() {
   nohup python3 "$SKILL_DIR/gog-token-server.py" \
     "$GOG_ACCOUNT" \
     --port "$TOKEN_PORT" \
+    --bind "$HOST_IP" \
     --gog "$GOG_BIN" \
     > "$HOME/.config/gogcli/token-server.log" 2>&1 &
   echo $! > "$TOKEN_SERVER_PID_FILE"

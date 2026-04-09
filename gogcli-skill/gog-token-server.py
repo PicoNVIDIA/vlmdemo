@@ -168,7 +168,7 @@ def main() -> None:
         default=int(os.environ.get("GOG_TOKEN_SERVER_PORT", "9100")),
         help="Port to listen on (default: 9100, env: GOG_TOKEN_SERVER_PORT)",
     )
-    parser.add_argument("--bind", default="0.0.0.0", help="Bind address (default: 0.0.0.0)")
+    parser.add_argument("--bind", default="127.0.0.1", help="Bind address (default: 127.0.0.1 — loopback only; pass the host IP when sandbox access is needed)")
     parser.add_argument("--gog", default="", help="Path to gog binary (auto-detected if omitted)")
     args = parser.parse_args()
 
