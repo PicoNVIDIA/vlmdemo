@@ -1,0 +1,4 @@
+# MCP server/client for extract_pst_* (install alongside Aspose.Email-for-Python-via-NET)
+#fastmcp>=2.0
+python-dotenv>=1.0
+Aspose.Email-for-Python-via-NET
