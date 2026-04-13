@@ -220,12 +220,5 @@ nasa-apod-demo/
 | Response has `media_type: video` | ~10% of APOD entries are YouTube videos. Agent should note this and provide the video URL. Add `thumbs=true` to get a thumbnail. |
 | Agent returns empty or error | Check sandbox can reach the API: `openshell sandbox exec $SANDBOX -- curl -s "https://api.nasa.gov/planetary/apod?api_key=DEMO_KEY"` |
 
----
 
-## Booth Tips
 
-- **APOD changes daily** — every day at Computex you get a fresh photo without changing anything
-- **Use specific dates** that mean something to the audience: "Show me the photo from the day Computex started"
-- **The HD image link is the visual payoff** — have a browser tab ready to click it on the big screen
-- **Pair with Planet** for the "space → Earth" transition that makes NemoClaw's multi-domain story memorable
-- **For higher rate limits** at the booth, register a free NASA API key at [api.nasa.gov](https://api.nasa.gov/) — takes 30 seconds, gives 1000 requests/hour
