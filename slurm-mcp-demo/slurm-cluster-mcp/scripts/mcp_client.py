@@ -1,40 +1,39 @@
 #!/usr/bin/env python3
 """
-MCP client for the fake Slurm cluster — natural-language REPL.
+Direct MCP tool caller for the fake Slurm cluster.
 
-Designed to run inside an OpenShell sandbox (or any machine separate from
-the host running fake_cluster_mcp_server.py).
+The OpenClaw agent (which already has an LLM) decides which tool to call and
+with what arguments. This script executes that one tool call against the remote
+MCP server and prints the result to stdout. No secondary LLM is involved.
 
-The server URL is resolved in this order:
-  1. --server-url CLI flag
-  2. MCP_SERVER_URL environment variable
-  3. Default: http://host.docker.internal:9000/mcp
-     (Docker's built-in alias for the host machine; works in most container runtimes)
+Usage:
+  <skill_dir>/venv/bin/python3 mcp_client.py <tool> [options]
 
-Usage (inside the sandbox):
-    # Export the host's address, then run:
-    export MCP_SERVER_URL="http://<host-ip>:9000/mcp"
-    python access_cluster_mcp_client.py
+Tools:
+  get_hostname
+  sinfo
+  srun        [--gpus N] [--time-limit HH:MM:SS] [--epochs N] [--model NAME]
+  sbatch      [--script-name NAME]
+  squeue      [--user NAME]
+  sacctmgr    [--user NAME]
+  sreport     [--user NAME]
 
-    # Or pass directly:
-    python access_cluster_mcp_client.py --server-url http://192.168.1.10:9000/mcp
+Server URL (resolved in order):
+  1. --server-url flag
+  2. MCP_SERVER_URL env var
+  3. Default: http://host.openshell.internal:9000/mcp
 
-Example queries:
-    "what GPU partitions are available?"
-    "launch a training job with 4 GPUs for 10 epochs using vit-large"
-    "submit my train_bert.sh as a batch job"
-    "show me what jobs are running"
-    "what are my account limits?"
-    "how much compute have I used this month?"
+Always run with the skill venv's Python so the sandbox policy allows the
+outbound connection to port 9000. Do NOT use bare python3.
 """
+from __future__ import annotations
+
 import asyncio
 import os
 import sys
 import argparse
 
 try:
-    from colorama import Fore, init as colorama_init
-    from dotenv import load_dotenv
     from fastmcp import Client
 except ImportError as _e:
     _skill_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -42,105 +41,83 @@ except ImportError as _e:
     print(
         f"\nMissing dependency: {_e}\n"
         "Run this script with the skill venv's Python, not bare python3:\n\n"
-        f"  {_venv_python} {__file__}\n\n"
+        f"  {_venv_python} {__file__} <tool> [args]\n\n"
         "If the venv doesn't exist yet, create it with:\n\n"
         f"  python3 -m venv {_skill_dir}/venv\n"
-        f"  {_skill_dir}/venv/bin/pip install -q fastmcp colorama python-dotenv\n",
+        f"  {_skill_dir}/venv/bin/pip install -q fastmcp\n",
         file=sys.stderr,
     )
     sys.exit(1)
 
-load_dotenv()
-colorama_init(autoreset=True)
-
-# ---------------------------------------------------------------------------
-# Configuration — resolved at startup, printed so the user can verify
-# ---------------------------------------------------------------------------
-_DEFAULT_URL = "http://host.docker.internal:9000/mcp"
+_DEFAULT_URL = "http://host.openshell.internal:9000/mcp"
 
 
-def _resolve_server_url(cli_arg: str | None) -> str:
-    if cli_arg:
-        return cli_arg
-    return os.environ.get("MCP_SERVER_URL", _DEFAULT_URL)
-
-
-# ---------------------------------------------------------------------------
-# MCP call
-# ---------------------------------------------------------------------------
-
-async def ask_cluster(server_url: str, query: str) -> str:
-    """Send a natural-language query to the cluster_agent tool on the server."""
+async def call_tool(server_url: str, tool: str, args: dict) -> str:
     async with Client(server_url) as client:
-        result = await client.call_tool("cluster_agent", {"query": query})
+        result = await client.call_tool(tool, args)
     return result.content[0].text
 
 
-def stream_print(text: str):
-    """Print word-by-word with green color to simulate streaming output."""
-    words = text.split(" ")
-    for i, word in enumerate(words):
-        print(
-            Fore.GREEN + word,
-            end="" if i == len(words) - 1 else " ",
-            flush=True,
-        )
-    print()
-
-
-# ---------------------------------------------------------------------------
-# REPL
-# ---------------------------------------------------------------------------
-
-def repl(server_url: str):
-    print(Fore.CYAN + "=" * 60)
-    print(Fore.CYAN + "  Fake Slurm Cluster — natural language interface")
-    print(Fore.CYAN + f"  Server : {server_url}")
-    print(Fore.CYAN + "  Type 'quit' or Ctrl-C to exit.")
-    print(Fore.CYAN + "=" * 60 + "\n")
-
-    while True:
-        try:
-            query = input(Fore.YELLOW + "cluster> ").strip()
-        except (EOFError, KeyboardInterrupt):
-            print()
-            break
-
-        if not query:
-            continue
-        if query.lower() in ("quit", "exit", "q"):
-            break
-
-        try:
-            result = asyncio.run(ask_cluster(server_url, query))
-        except Exception as exc:
-            print(Fore.RED + f"Error: {exc}")
-            print(Fore.RED + f"Is the server reachable at {server_url}?")
-            continue
-
-        print()
-        stream_print(result)
-        print()
-
-
-# ---------------------------------------------------------------------------
-# Entry point
-# ---------------------------------------------------------------------------
-
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(
-        description="Fake Slurm MCP Client (sandbox-side)",
+def main() -> None:
+    root = argparse.ArgumentParser(
+        description="Call a specific Slurm MCP tool directly.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    parser.add_argument(
+    root.add_argument(
         "--server-url",
-        default="http://host.openshell.internal:9000/mcp",
-        help=(
-            "Full URL of the MCP server, e.g. http://192.168.1.10:9000/mcp. "
-            "Overrides MCP_SERVER_URL env var."
-        ),
+        default=os.environ.get("MCP_SERVER_URL", _DEFAULT_URL),
+        help="Full URL of the MCP server.",
     )
-    args = parser.parse_args()
 
-    server_url = _resolve_server_url(args.server_url)
-    repl(server_url)
+    sub = root.add_subparsers(dest="tool", metavar="<tool>", required=True)
+
+    sub.add_parser("get_hostname", help="Return the cluster headnode hostname.")
+    sub.add_parser("sinfo", help="Show available partitions and node states.")
+
+    p_srun = sub.add_parser("srun", help="Launch a fake interactive training job.")
+    p_srun.add_argument("--gpus", type=int, default=1, help="Number of GPUs to allocate.")
+    p_srun.add_argument("--time-limit", default="01:00:00", help="Wall-time limit HH:MM:SS.")
+    p_srun.add_argument("--epochs", type=int, default=5, help="Training epochs to simulate.")
+    p_srun.add_argument("--model", default="resnet50", help="Model name for the epoch log.")
+
+    p_sbatch = sub.add_parser("sbatch", help="Submit a fake batch job.")
+    p_sbatch.add_argument("--script-name", default="train.sh", help="Batch script filename.")
+
+    p_squeue = sub.add_parser("squeue", help="Show the Slurm job queue.")
+    p_squeue.add_argument("--user", default="user", help='Username to filter; "all" for everyone.')
+
+    p_sacctmgr = sub.add_parser("sacctmgr", help="Show account associations for a user.")
+    p_sacctmgr.add_argument("--user", default="user", help="Username to query.")
+
+    p_sreport = sub.add_parser("sreport", help="Show cluster utilisation report.")
+    p_sreport.add_argument("--user", default="user", help="Username to query.")
+
+    parsed = root.parse_args()
+    server_url = parsed.server_url
+    tool = parsed.tool
+
+    # Build the args dict for the tool call (strip server_url and tool keys)
+    tool_args: dict = {}
+    if tool == "srun":
+        tool_args = {
+            "gpus": parsed.gpus,
+            "time_limit": parsed.time_limit,
+            "epochs": parsed.epochs,
+            "model": parsed.model,
+        }
+    elif tool == "sbatch":
+        tool_args = {"script_name": parsed.script_name}
+    elif tool in ("squeue", "sacctmgr", "sreport"):
+        tool_args = {"user": parsed.user}
+
+    try:
+        result = asyncio.run(call_tool(server_url, tool, tool_args))
+        print(result)
+    except Exception as exc:
+        print(f"Error calling '{tool}': {exc}", file=sys.stderr)
+        print(f"Is the server reachable at {server_url}?", file=sys.stderr)
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()
