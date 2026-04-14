@@ -29,11 +29,26 @@ Example queries:
 """
 import asyncio
 import os
+import sys
 import argparse
 
-from colorama import Fore, init as colorama_init
-from dotenv import load_dotenv
-from fastmcp import Client
+try:
+    from colorama import Fore, init as colorama_init
+    from dotenv import load_dotenv
+    from fastmcp import Client
+except ImportError as _e:
+    _skill_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    _venv_python = os.path.join(_skill_dir, "venv", "bin", "python3")
+    print(
+        f"\nMissing dependency: {_e}\n"
+        "Run this script with the skill venv's Python, not bare python3:\n\n"
+        f"  {_venv_python} {__file__}\n\n"
+        "If the venv doesn't exist yet, create it with:\n\n"
+        f"  python3 -m venv {_skill_dir}/venv\n"
+        f"  {_skill_dir}/venv/bin/pip install -q fastmcp colorama python-dotenv\n",
+        file=sys.stderr,
+    )
+    sys.exit(1)
 
 load_dotenv()
 colorama_init(autoreset=True)

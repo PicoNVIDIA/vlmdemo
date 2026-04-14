@@ -11,11 +11,23 @@ Provide a natural-language interface to a fake Slurm HPC cluster through an MCP 
 
 ## Quick Start
 
-### 1. Install dependencies
+### 1. Set up the skill venv (first use only)
+
+A dedicated venv lives alongside this skill. Create it and install dependencies if it doesn't exist yet:
 
 ```bash
-pip install fastmcp colorama python-dotenv
+SKILL_DIR="$(dirname "$(realpath "$0")")/.."   # or the absolute skill path
+python3 -m venv "$SKILL_DIR/venv"
+"$SKILL_DIR/venv/bin/pip" install -q fastmcp colorama python-dotenv
 ```
+
+The venv is at `<skill_dir>/venv/`. **Always invoke the client with its python** so the sandbox network policy allows the outbound connection to port 9000:
+
+```bash
+<skill_dir>/venv/bin/python3 <skill_dir>/scripts/mcp_client.py
+```
+
+Do **not** use the bare `python3` command — the system Python is not permitted by the sandbox policy to reach the MCP server.
 
 ### 2. Determine the server URL
 

@@ -9,8 +9,10 @@ filesystem_policy:
     - /app
     - /etc
     - /var/log
+    - /sandbox/.openclaw
   read_write:
     - /sandbox
+    - /sandbox/.openclaw-data
     - /tmp
     - /dev/null
 landlock:
@@ -38,6 +40,7 @@ network_policies:
         port: 443
     binaries:
       - path: /usr/local/bin/claude
+      - path: /usr/local/bin/node
       - path: /usr/bin/node
   mcp_server_host:
     name: mcp_server_host
@@ -50,13 +53,19 @@ network_policies:
         port: 9000      
     binaries:
       - { path: /usr/local/bin/claude }
+      - { path: /usr/local/bin/node }
       - { path: /usr/bin/node }
       - { path: /usr/bin/curl }
+      - { path: /usr/bin/python3 }
+      - { path: /usr/bin/python3.11 }
       - { path: /sandbox/.venv/bin/python }
       - { path: /sandbox/.venv/bin/python3 }
       - { path: /sandbox/test_mcp_client/.venv/bin/python }
       - { path: /sandbox/test_mcp_client/.venv/bin/python3 }
       - { path: "/sandbox/.uv/python/**" }
+      - { path: "/sandbox/.openclaw/workspace/skills/*/venv/bin/python" }
+      - { path: "/sandbox/.openclaw/workspace/skills/*/venv/bin/python3" }
+      - { path: "/sandbox/.openclaw/workspace/skills/*/venv/bin/python3.11" }
   nvidia:
     name: nvidia
     endpoints:
@@ -120,9 +129,14 @@ network_policies:
       - { host: api.github.com, port: 443 }
       - { host: downloads.python.org, port: 443 }
     binaries:
+      - { path: /usr/bin/python3 }
+      - { path: /usr/bin/python3.11 }
       - { path: /sandbox/.venv/bin/python }
       - { path: /sandbox/.venv/bin/python3 }
       - { path: /sandbox/.venv/bin/pip }
+      - { path: "/sandbox/.openclaw/workspace/skills/*/venv/bin/python" }
+      - { path: "/sandbox/.openclaw/workspace/skills/*/venv/bin/python3" }
+      - { path: "/sandbox/.openclaw/workspace/skills/*/venv/bin/pip" }
       - { path: /app/.venv/bin/python }
       - { path: /app/.venv/bin/python3 }
       - { path: /app/.venv/bin/pip }

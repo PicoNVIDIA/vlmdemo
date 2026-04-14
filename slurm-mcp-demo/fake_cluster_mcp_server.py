@@ -42,8 +42,17 @@ mcp = FastMCP("fake-slurm-cluster")
 # LLM client  (requires NVIDIA_API_KEY in env or .env)
 # ---------------------------------------------------------------------------
 _llm = ChatNVIDIA(
-    model="nvidia/nemotron-3-super-120b-a12b",
+    model="nvidia/llama-3.3-nemotron-super-49b-v1.5",
     api_key=os.environ.get("NVIDIA_API_KEY", ""),
+    temperature=1,
+    top_p=1,
+    max_tokens=16384,
+    extra_body={
+        "chat_template_kwargs": {
+            "enable_thinking": True,
+            "clear_thinking": False,
+        }
+    },
 )
 
 # ---------------------------------------------------------------------------
