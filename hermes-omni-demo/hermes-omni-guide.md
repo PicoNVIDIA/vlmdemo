@@ -91,12 +91,31 @@ git clone https://github.com/PicoNVIDIA/vlmdemo.git
 cd vlmdemo/hermes-omni-demo
 ```
 
-## Part 4: Apply the Knowledge-Lookup Policy
+## Part 4: Add the Knowledge-Lookup Policy Blocks
 
-The baseline Hermes policy already allows the NVIDIA Omni API, PyPI, and a few Nous Research endpoints. We need to add two more whitelists — Wikipedia's summary API and the Free Dictionary API — so the jargon-lookup skill can do its job.
+The baseline Hermes policy already allows the NVIDIA Omni API, PyPI, and a few Nous Research endpoints. We need to add two more whitelists — Wikipedia's summary API and the Free Dictionary API — so the jargon-lookup skill can do its job. `openshell policy set` replaces the full policy, so we export the current one, append the new blocks, and re-apply.
+
+### 4a. Export the current policy
 
 ``` bash
-openshell policy set --policy policy/hermes-omni-lookup.yaml $SANDBOX
+openshell policy get $SANDBOX --full > /tmp/raw-policy.txt
+sed -n '8,$p' /tmp/raw-policy.txt > /tmp/current-policy.yaml
+```
+
+The first few lines of `raw-policy.txt` are a status header; Parts 8 onward contain the YAML.
+
+### 4b. Append the two new blocks
+
+`policy/hermes-omni-lookup.yaml` in this repo contains the two blocks in ready-to-paste form (already indented to sit under `network_policies:`). Append them:
+
+``` bash
+cat policy/hermes-omni-lookup.yaml >> /tmp/current-policy.yaml
+```
+
+### 4c. Apply the updated policy
+
+``` bash
+openshell policy set --policy /tmp/current-policy.yaml $SANDBOX
 ```
 
 You should see:
@@ -146,23 +165,26 @@ You should see both skills listed under `general`.
 
 ## Part 6: Upload the Scripts and SOUL.md
 
-The skills reference two Python scripts that must live in the sandbox workspace. Upload them and make them executable:
+The skills reference two Python scripts that must live in the sandbox workspace. Upload them with a **trailing slash** on the destination — that puts the file into the directory instead of creating a nested folder:
 
 ``` bash
 openshell sandbox upload $SANDBOX scripts/omni-video-analyze.py /sandbox/.hermes-data/workspace/
 openshell sandbox upload $SANDBOX scripts/lookup-jargon.py /sandbox/.hermes-data/workspace/
-
-# openshell upload creates a DEST directory and puts the file inside. Flatten it:
-openshell sandbox exec -n $SANDBOX -- bash -c '
-  WORK=/sandbox/.hermes-data/workspace
-  for f in omni-video-analyze.py lookup-jargon.py; do
-    if [[ -d "$WORK/$f" ]]; then
-      mv "$WORK/$f/$f" "$WORK/$f.tmp"; rmdir "$WORK/$f"; mv "$WORK/$f.tmp" "$WORK/$f"
-    fi
-    chmod +x "$WORK/$f"
-  done
-'
 ```
+
+Make them executable:
+
+``` bash
+openshell sandbox exec -n $SANDBOX -- chmod +x /sandbox/.hermes-data/workspace/omni-video-analyze.py /sandbox/.hermes-data/workspace/lookup-jargon.py
+```
+
+Verify:
+
+``` bash
+openshell sandbox exec -n $SANDBOX -- ls -la /sandbox/.hermes-data/workspace/
+```
+
+You should see both `.py` files with `-rwxr-xr-x` permissions.
 
 ### Drop in SOUL.md
 
@@ -171,25 +193,20 @@ Hermes reads `SOUL.md` to decide which tool to reach for. Our SOUL explicitly te
 - Never try `browser_navigate` or `curl` for Wikipedia — call `lookup-jargon.py`
 - Re-run the video script when the user asks a follow-up, instead of answering from memory
 
-Upload it to both paths Hermes reads:
+Hermes reads SOUL.md from **two paths** — keep both in sync:
 
 ``` bash
 openshell sandbox upload $SANDBOX memories/SOUL.md /sandbox/.hermes-data/memories/
 openshell sandbox upload $SANDBOX memories/SOUL.md /sandbox/.hermes-data/
-
-openshell sandbox exec -n $SANDBOX -- bash -c '
-  for dir in /sandbox/.hermes-data/memories /sandbox/.hermes-data; do
-    if [[ -d "$dir/SOUL.md" ]]; then
-      mv "$dir/SOUL.md/SOUL.md" "$dir/SOUL.md.tmp"; rmdir "$dir/SOUL.md"; mv "$dir/SOUL.md.tmp" "$dir/SOUL.md"
-    fi
-  done
-'
 ```
 
-> **Shortcut:** Parts 4–6 are automated in `install.sh`:
-> ``` bash
-> SANDBOX=$SANDBOX ./install.sh
-> ```
+Verify:
+
+``` bash
+openshell sandbox exec -n $SANDBOX -- ls -la /sandbox/.hermes-data/SOUL.md /sandbox/.hermes-data/memories/SOUL.md
+```
+
+Both files should have the same size.
 
 ## Part 7: Add a Test Video
 
@@ -220,11 +237,14 @@ openshell sandbox exec -n $SANDBOX -- ls -la /tmp/test-video.mp4
 
 ### Smoke-test the analyzer before touching Hermes
 
+The sandbox stores the NVIDIA API key in `/sandbox/.hermes-data/.env` (under `OPENAI_API_KEY`, the NemoClaw convention). The script reads either `NVIDIA_API_KEY` or `OPENAI_API_KEY`, so source the env before running:
+
 ``` bash
-openshell sandbox exec -n $SANDBOX -- python3 /sandbox/.hermes-data/workspace/omni-video-analyze.py /tmp/test-video.mp4 "What is in this video?"
+openshell sandbox exec -n $SANDBOX -- bash -c \
+  'set -a; . /sandbox/.hermes-data/.env; set +a; python3 /sandbox/.hermes-data/workspace/omni-video-analyze.py /tmp/test-video.mp4 "What is in this video?"'
 ```
 
-You should see Omni describe what it sees plus a line like `[36983 tokens, 15406KB payload]`. If this works, the Omni path is healthy.
+You should see Omni describe what it sees plus a line like `[5878 tokens, 350KB payload]`. If this works, the Omni path is healthy.
 
 ## Part 8: Chat with the Agent
 

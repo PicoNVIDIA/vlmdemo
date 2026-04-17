@@ -20,9 +20,12 @@ import sys, json, base64, urllib.request, os, subprocess, re, argparse, struct
 
 API_URL = "https://integrate.api.nvidia.com/v1/chat/completions"
 MODEL = "private/nvidia/nemotron-3-nano-omni-reasoning-30b-a3b"
-API_KEY = os.environ.get("NVIDIA_API_KEY")
+API_KEY = os.environ.get("NVIDIA_API_KEY") or os.environ.get("OPENAI_API_KEY")
 if not API_KEY:
-    sys.exit("NVIDIA_API_KEY is not set. export NVIDIA_API_KEY=nvapi-... and retry.")
+    sys.exit(
+        "NVIDIA_API_KEY is not set. "
+        "export NVIDIA_API_KEY=nvapi-... (or OPENAI_API_KEY inside the sandbox) and retry."
+    )
 
 
 def get_duration(video_path: str):
