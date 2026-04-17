@@ -226,6 +226,22 @@ openshell sandbox exec -n $SANDBOX -- ls -la /sandbox/.hermes-data/SOUL.md /sand
 
 Both files should have the same size.
 
+### Expose the API key to scripts spawned by Hermes
+
+When Hermes runs the scripts via its `terminal` tool, the spawned process inherits the sandbox's environment from `/sandbox/.hermes-data/.env`. The API key isn't there by default (Hermes itself doesn't need it — the openshell gateway calls NVIDIA on its behalf). But our scripts call NVIDIA directly, so append the key once:
+
+``` bash
+openshell sandbox exec -n $SANDBOX -- bash -c "echo NVIDIA_API_KEY=$NVIDIA_API_KEY >> /sandbox/.hermes-data/.env"
+```
+
+Verify it landed (should echo back the key):
+
+``` bash
+openshell sandbox exec -n $SANDBOX -- grep NVIDIA_API_KEY /sandbox/.hermes-data/.env
+```
+
+> Note: this writes the key into the sandbox's state directory. Destroy the sandbox with `nemoclaw $SANDBOX destroy --yes` when you're done to remove it.
+
 ## Part 7: Add a Test Video
 
 Omni needs a video to look at. Generate a short synthetic one with `ffmpeg` on the host (or bring your own MP4):
@@ -255,14 +271,14 @@ openshell sandbox exec -n $SANDBOX -- ls -la /tmp/test-video.mp4
 
 ### Smoke-test the analyzer before touching Hermes
 
-The script calls NVIDIA directly (bypassing Hermes), so it needs the API key in its environment. Pass it through from your host shell:
+Since Part 6 appended `NVIDIA_API_KEY` to the sandbox's `.env`, the script can pick it up from there. Source the env and run:
 
 ``` bash
 openshell sandbox exec -n $SANDBOX -- bash -c \
-  "export NVIDIA_API_KEY=$NVIDIA_API_KEY; python3 /sandbox/.hermes-data/workspace/omni-video-analyze.py /tmp/test-video.mp4 'What is in this video?'"
+  'set -a; . /sandbox/.hermes-data/.env; set +a; python3 /sandbox/.hermes-data/workspace/omni-video-analyze.py /tmp/test-video.mp4 "What is in this video?"'
 ```
 
-You should see Omni describe what it sees plus a line like `[5878 tokens, 350KB payload]`. If this works, the Omni path is healthy. **Hermes itself doesn't need the key** — it reaches Omni via the openshell gateway's inference route, which already has the key from `openshell inference set` in Part 2.
+You should see Omni describe what it sees plus a line like `[5878 tokens, 350KB payload]`. If this works, the Omni path is healthy.
 
 ## Part 8: Chat with the Agent
 
