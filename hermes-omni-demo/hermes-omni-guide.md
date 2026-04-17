@@ -77,11 +77,29 @@ You should see `Phase: Ready` and the Hermes gateway listening on port 8642.
 > nemoclaw onboard --agent hermes --non-interactive --yes-i-accept-third-party-software
 > ```
 
+### Switch the gateway to Nemotron Omni
+
+Onboarding defaults to **Nemotron Super 120B** (text-only). For this cookbook you want **Omni** as the primary model so Hermes can handle video, images, and audio. Swap the gateway's inference route:
+
+``` bash
+openshell inference set \
+  --provider nvidia-prod \
+  --model private/nvidia/nemotron-3-nano-omni-reasoning-30b-a3b
+```
+
+Verify:
+
+``` bash
+openshell inference get
+```
+
+You should see `Model: private/nvidia/nemotron-3-nano-omni-reasoning-30b-a3b`.
+
 ## Part 3: Set Variables
 
 ``` bash
 export SANDBOX=my-hermes                       # whatever you named it in Part 2
-export NVIDIA_API_KEY=nvapi-...                # your NVIDIA API key
+export NVIDIA_API_KEY=nvapi-...                # your NVIDIA API key (same one you used in onboard)
 ```
 
 Clone this cookbook (if you haven't already):
@@ -237,14 +255,14 @@ openshell sandbox exec -n $SANDBOX -- ls -la /tmp/test-video.mp4
 
 ### Smoke-test the analyzer before touching Hermes
 
-The sandbox stores the NVIDIA API key in `/sandbox/.hermes-data/.env` (under `OPENAI_API_KEY`, the NemoClaw convention). The script reads either `NVIDIA_API_KEY` or `OPENAI_API_KEY`, so source the env before running:
+The script calls NVIDIA directly (bypassing Hermes), so it needs the API key in its environment. Pass it through from your host shell:
 
 ``` bash
 openshell sandbox exec -n $SANDBOX -- bash -c \
-  'set -a; . /sandbox/.hermes-data/.env; set +a; python3 /sandbox/.hermes-data/workspace/omni-video-analyze.py /tmp/test-video.mp4 "What is in this video?"'
+  "export NVIDIA_API_KEY=$NVIDIA_API_KEY; python3 /sandbox/.hermes-data/workspace/omni-video-analyze.py /tmp/test-video.mp4 'What is in this video?'"
 ```
 
-You should see Omni describe what it sees plus a line like `[5878 tokens, 350KB payload]`. If this works, the Omni path is healthy.
+You should see Omni describe what it sees plus a line like `[5878 tokens, 350KB payload]`. If this works, the Omni path is healthy. **Hermes itself doesn't need the key** — it reaches Omni via the openshell gateway's inference route, which already has the key from `openshell inference set` in Part 2.
 
 ## Part 8: Chat with the Agent
 
