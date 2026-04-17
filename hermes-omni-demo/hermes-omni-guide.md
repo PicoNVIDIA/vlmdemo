@@ -32,12 +32,7 @@ nemoclaw --version
 openshell --version
 ```
 
-You should see something like:
-
-```
-NemoClaw v0.0.16
-openshell 0.0.26
-```
+You should see version strings for both.
 
 ## Part 2: Onboard with the Hermes Agent
 
