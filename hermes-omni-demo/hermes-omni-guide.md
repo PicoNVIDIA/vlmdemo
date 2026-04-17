@@ -51,7 +51,7 @@ When prompted:
 
 1. **Inference**: Choose `1` (NVIDIA Endpoints)
 2. **API Key**: Paste your NVIDIA API key (`nvapi-...`)
-3. **Model**: Choose the **Nemotron Omni** option (Hermes will use Omni as its primary model)
+3. **Model**: Choose `1` (Nemotron 3 Super 120B). You'll swap this to Omni in the next step — the onboard menu doesn't offer Omni directly.
 4. **Sandbox name**: Enter a name — this guide uses `my-hermes`
 5. **Policy presets**: Accept the suggested presets with `Y`
 
@@ -70,16 +70,9 @@ nemoclaw my-hermes status
 
 You should see `Phase: Ready` and the Hermes gateway listening on port 8642.
 
-> **Non-interactive mode:**
-> ``` bash
-> export NEMOCLAW_NON_INTERACTIVE=1
-> export NVIDIA_API_KEY=nvapi-...
-> nemoclaw onboard --agent hermes --non-interactive --yes-i-accept-third-party-software
-> ```
-
 ### Switch the gateway to Nemotron Omni
 
-Onboarding defaults to **Nemotron Super 120B** (text-only). For this cookbook you want **Omni** as the primary model so Hermes can handle video, images, and audio. Swap the gateway's inference route:
+You picked Super 120B during onboarding because it's what the menu offers, but this cookbook needs **Omni** as the primary model so Hermes can handle video, images, and audio. Swap the gateway's inference route now:
 
 ``` bash
 openshell inference set \
