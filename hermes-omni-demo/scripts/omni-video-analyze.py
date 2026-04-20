@@ -4,6 +4,18 @@
 """
 Nemotron Omni video analysis — sends the full video to Omni in one API call.
 
+This script is designed to run INSIDE a NemoClaw sandbox. It calls the openshell
+gateway's inference route at https://inference.local/v1 instead of hitting
+integrate.api.nvidia.com directly. The gateway injects the NVIDIA API key and
+proxies the request out, so no key ever needs to exist inside the sandbox.
+
+The `model` field is ignored by the gateway — it rewrites all requests to
+whatever `openshell inference set` was pointed at (set Omni for this cookbook).
+
+Practical payload ceiling: ~9 MB of base64-encoded video per call (gateway body
+cap). That's roughly 2 minutes of 480p or 1 minute of 720p. Longer videos need
+to be trimmed client-side.
+
 Modes:
     analyze     Describe what's happening in the video (default)
     transcript  Extract audio captions as JSON with timestamps
@@ -12,20 +24,13 @@ Usage:
     python3 omni-video-analyze.py /path/to/video.mp4
     python3 omni-video-analyze.py /path/to/video.mp4 "What topics are covered?"
     python3 omni-video-analyze.py /path/to/video.mp4 --mode transcript
-
-Environment:
-    NVIDIA_API_KEY  Required. Your NVIDIA API key (nvapi-...). Get one at build.nvidia.com.
 """
 import sys, json, base64, urllib.request, os, subprocess, re, argparse, struct
 
-API_URL = "https://integrate.api.nvidia.com/v1/chat/completions"
+API_URL = "https://inference.local/v1/chat/completions"
+# Model field is rewritten by the openshell gateway based on its configured
+# inference route. Kept here only as a documentation hint.
 MODEL = "private/nvidia/nemotron-3-nano-omni-reasoning-30b-a3b"
-API_KEY = os.environ.get("NVIDIA_API_KEY") or os.environ.get("OPENAI_API_KEY")
-if not API_KEY:
-    sys.exit(
-        "NVIDIA_API_KEY is not set. "
-        "export NVIDIA_API_KEY=nvapi-... (or OPENAI_API_KEY inside the sandbox) and retry."
-    )
 
 
 def get_duration(video_path: str):
@@ -93,7 +98,7 @@ def fmt_time(seconds: float) -> str:
 
 
 def call_omni(video_path: str, prompt: str, max_tokens: int = 2048) -> dict:
-    """Send the whole video to Omni and return the response."""
+    """Send the whole video to Omni via the openshell gateway."""
     with open(video_path, "rb") as f:
         video_b64 = base64.b64encode(f.read()).decode()
 
@@ -112,11 +117,19 @@ def call_omni(video_path: str, prompt: str, max_tokens: int = 2048) -> dict:
         "max_tokens": max_tokens,
     }).encode()
 
+    size_mb = len(payload) / 1e6
+    if size_mb > 9:
+        print(
+            f"Warning: payload is {size_mb:.1f} MB. The openshell gateway caps "
+            "inference bodies around ~9 MB; the call may fail with an SSL EOF. "
+            "Trim the video with ffmpeg if needed.",
+            file=sys.stderr,
+        )
+
     req = urllib.request.Request(
         API_URL,
         data=payload,
         headers={
-            "Authorization": f"Bearer {API_KEY}",
             "Content-Type": "application/json",
         },
     )

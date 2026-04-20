@@ -34,6 +34,8 @@ openshell --version
 
 You should see version strings for both.
 
+> This step only installs the CLI binaries. The onboarding wizard runs once in Part 2.
+
 ## Part 2: Onboard with the Hermes Agent
 
 NemoClaw ships a first-class Hermes agent — pass `--agent hermes` during onboarding:
@@ -87,8 +89,9 @@ You should see `Model: private/nvidia/nemotron-3-nano-omni-reasoning-30b-a3b`.
 
 ``` bash
 export SANDBOX=my-hermes                       # whatever you named it in Part 2
-export NVIDIA_API_KEY=nvapi-...                # your NVIDIA API key (same one you used in onboard)
 ```
+
+The NVIDIA API key only needs to exist where you ran `nemoclaw onboard` — it lives in the openshell gateway's credential store from that point on. The scripts inside the sandbox reach Omni through the gateway and never handle the key directly.
 
 Clone this cookbook (if you haven't already):
 
@@ -214,21 +217,7 @@ openshell sandbox exec -n $SANDBOX -- ls -la /sandbox/.hermes-data/SOUL.md /sand
 
 Both files should have the same size.
 
-### Expose the API key to scripts spawned by Hermes
-
-When Hermes runs the scripts via its `terminal` tool, the spawned process inherits the sandbox's environment from `/sandbox/.hermes-data/.env`. The API key isn't there by default (Hermes itself doesn't need it — the openshell gateway calls NVIDIA on its behalf). But our scripts call NVIDIA directly, so append the key once:
-
-``` bash
-openshell sandbox exec -n $SANDBOX -- bash -c "echo NVIDIA_API_KEY=$NVIDIA_API_KEY >> /sandbox/.hermes-data/.env"
-```
-
-Verify it landed (should echo back the key):
-
-``` bash
-openshell sandbox exec -n $SANDBOX -- grep NVIDIA_API_KEY /sandbox/.hermes-data/.env
-```
-
-> Note: this writes the key into the sandbox's state directory. Destroy the sandbox with `nemoclaw $SANDBOX destroy --yes` when you're done to remove it.
+The script routes its Omni requests through the openshell gateway at `https://inference.local/v1/chat/completions` — the gateway proxies out to NVIDIA and injects the API key on the way. Nothing inside the sandbox needs to know the key.
 
 ## Part 7: Add a Test Video
 
@@ -270,16 +259,15 @@ openshell sandbox exec -n $SANDBOX -- ls -la /tmp/test-video.mp4
 
 The rest of the guide assumes the video is at `/tmp/test-video.mp4` inside the sandbox. If you used a different name, substitute accordingly in the prompts below.
 
+> **Payload ceiling:** The openshell gateway caps inference request bodies at roughly **9 MB**. That's about 2 minutes of 480p video or 1 minute of 720p, encoded as base64 inside the JSON payload. Larger videos will fail with an `SSL EOF` from the gateway. If you need longer content, trim first with `ffmpeg -i input.mp4 -t 120 -c copy output.mp4`.
+
 ### Smoke-test the analyzer before touching Hermes
 
-Since Part 6 appended `NVIDIA_API_KEY` to the sandbox's `.env`, the script can pick it up from there. Source the env and run:
-
 ``` bash
-openshell sandbox exec -n $SANDBOX -- bash -c \
-  'set -a; . /sandbox/.hermes-data/.env; set +a; python3 /sandbox/.hermes-data/workspace/omni-video-analyze.py /tmp/test-video.mp4 "What is in this video?"'
+openshell sandbox exec -n $SANDBOX -- python3 /sandbox/.hermes-data/workspace/omni-video-analyze.py /tmp/test-video.mp4 "What is in this video?"
 ```
 
-You should see Omni describe what it sees plus a line like `[5878 tokens, 350KB payload]`. If this works, the Omni path is healthy.
+You should see Omni describe what it sees plus a line like `[5878 tokens, 350KB payload]`. If this works, the Omni path through the gateway is healthy.
 
 ## Part 8: Chat with the Agent
 
@@ -378,7 +366,8 @@ Hermes will report the block in plain language. Every call to `integrate.api.nvi
 
 | Issue | Fix |
 |-------|-----|
-| `NVIDIA_API_KEY is not set` when running the script | `export NVIDIA_API_KEY=nvapi-...` before running, or set it inside the sandbox shell. The scripts refuse to run without it. |
+| `SSL EOF occurred in violation of protocol` from the script | The video payload exceeded the gateway's ~9 MB inference body cap. Trim with `ffmpeg -i big.mp4 -t 120 -c copy smaller.mp4`, upload the trimmed file, and re-run. |
+| `Connection refused` or DNS failure on `inference.local` | The sandbox lost its gateway route. Run `openshell inference get` on the host to verify the route is configured; re-run `openshell inference set ...` from Part 2 if not. |
 | Hermes says "I don't have the ability to browse the web" | SOUL.md didn't load or didn't override the stale one at `/sandbox/.hermes-data/SOUL.md`. Re-run Part 6; there are **two** SOUL files and both must be kept in sync. Then `/exit` and restart `hermes chat`. |
 | Hermes calls `browser_navigate` or `curl` for Wikipedia | Same root cause as above — SOUL isn't steering. Confirm `grep "lookup-jargon" /sandbox/.hermes-data/SOUL.md` returns lines, restart chat. |
 | `exit 126` when Hermes runs a script | The script lost its executable bit. `chmod +x` it inside the sandbox. |
