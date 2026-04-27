@@ -1,52 +1,67 @@
 ---
 name: video-analyze
-description: Analyze video files using Nemotron Omni 30B multimodal model. Sends the entire video to Omni in one API call and returns a description or audio transcript. Use whenever the user provides a video path and wants it analyzed, described, summarized, or transcribed.
-version: 2.0.0
+description: Analyze video files using Nemotron Omni 30B multimodal model. Handles a single video, image, audio file, a directory of PDF-rendered pages, OR a directory of pre-chunked video segments for long videos. Use whenever the user provides a video path and wants it analyzed, described, summarized, or transcribed.
+version: 3.0.0
 metadata:
   hermes:
-    tags: [video, omni, multimodal, transcript, analysis, nemotron]
+    tags: [video, omni, multimodal, transcript, analysis, nemotron, long-video, chunked]
 ---
 
 # Video Analysis with Nemotron Omni
 
-Analyze videos using NVIDIA's Nemotron Omni 30B multimodal model. The script sends the whole video to Omni in a single API call — no chunking, no ffmpeg required.
+Analyze videos, audio, images, and documents using NVIDIA's Nemotron Omni 30B multimodal model.
+
+## Inputs the skill accepts
+
+| Input | What happens |
+|---|---|
+| `*.mp4 / .mov / .webm` | One Omni call with the full video |
+| `*.mp3 / .wav / .m4a` | One Omni call with audio |
+| `*.png / .jpg / .webp` | One Omni call with the image |
+| Directory of PNGs (e.g. `*.pdf-pages/`) | One Omni call with all pages as multi-image |
+| **Directory of MP4 chunks (e.g. `*-chunks/`)** | **Per-chunk Omni call + final synthesis** (long-video path) |
+
+The chunked directory path expects `chunk_001.mp4`, `chunk_002.mp4`, … and a `chunks.json` manifest produced by the host-side `chunk-upload.sh` helper. If `chunks.json` is missing, the skill falls back to probing each chunk's duration to derive timestamps.
 
 ## When to use this skill
 
 - User provides a video path and asks to analyze, describe, or summarize it
 - User asks "what's happening in this video", "transcribe the audio", "what does the speaker say"
+- **User provides a path ending in `-chunks` or any directory containing video files** → chunked long-video flow
 - User wants a plain-English or structured analysis of video content
 
 ## CRITICAL — run the script via the `terminal` tool, NOT `execute_code`
 
-The `execute_code` tool runs in an isolated Python environment without network access. Calling the script from there will fail with a confusing error. Always use the terminal tool.
+The `execute_code` tool runs in an isolated Python environment without network access. Calling the script from there will fail. Always use the terminal tool.
 
 ## How to invoke
 
-### Mode 1: Analyze (default) — describes content, actions, topics
+### Mode 1: Analyze (default)
 
-**Default prompt:**
+**Single video / audio / image / pages dir:**
 ```bash
-python3 /sandbox/.hermes-data/workspace/omni-video-analyze.py /path/to/video.mp4
+python3 /sandbox/.hermes-data/workspace/omni-video-analyze.py /tmp/upload-X.mp4
+python3 /sandbox/.hermes-data/workspace/omni-video-analyze.py /tmp/upload-X.mp4 "Custom question"
 ```
 
-**Custom prompt:**
+**Long video (pre-chunked directory):**
 ```bash
-python3 /sandbox/.hermes-data/workspace/omni-video-analyze.py /path/to/video.mp4 "Summarize the lecture in 3 bullets."
-python3 /sandbox/.hermes-data/workspace/omni-video-analyze.py /path/to/video.mp4 "What technical terms does the speaker use?"
-python3 /sandbox/.hermes-data/workspace/omni-video-analyze.py /path/to/video.mp4 "Focus on the last minute — what conclusion is reached?"
+python3 /sandbox/.hermes-data/workspace/omni-video-analyze.py /tmp/long-video-chunks
+python3 /sandbox/.hermes-data/workspace/omni-video-analyze.py /tmp/long-video-chunks "What's the speaker's main argument?"
 ```
 
-### Mode 2: Transcript — extracts audio captions as JSON
+When given a chunk directory, the skill loops over each segment with the user's question, then runs ONE final synthesis call across all segment summaries to produce the user-facing answer. Cost scales linearly with video length.
+
+### Mode 2: Transcript (single input only)
 
 ```bash
-python3 /sandbox/.hermes-data/workspace/omni-video-analyze.py /path/to/video.mp4 --mode transcript
+python3 /sandbox/.hermes-data/workspace/omni-video-analyze.py /tmp/upload-X.mp4 --mode transcript
 ```
 
-Transcript output format:
+Transcript output:
 ```json
 {
-  "video": "/path/to/video.mp4",
+  "video": "/tmp/upload-X.mp4",
   "duration": "3:05",
   "transcript": [
     {"timestamp": "0:03", "speaker": "Professor", "text": "Today we will discuss..."},
@@ -55,13 +70,26 @@ Transcript output format:
 }
 ```
 
+Transcript mode does NOT support chunked directories — it requires a single video file.
+
 ## Follow-up questions
 
-Each call to `omni-video-analyze.py` re-sends the video to Omni. If the user asks a follow-up (e.g., you first answered "what's the conclusion?" and they then ask "who is the professor?"), **re-run the script with the new question**. Do not answer from memory of a previous narrow answer.
+Each call to `omni-video-analyze.py` re-sends the video (or chunks) to Omni. If the user asks a follow-up, **re-run the script with the new question**. Do not answer from memory of a previous narrow answer.
+
+## Long-video workflow (host-side preparation)
+
+For videos longer than ~2 min, ask the user (or run yourself if you have host shell access) to chunk + upload first using the host helper:
+
+```bash
+chunk-upload.sh /path/to/long-video.mp4
+# → uploads /tmp/long-video-chunks/ into the sandbox
+```
+
+Then invoke the skill with the printed sandbox path.
 
 ## Tips
 
-- If a specific portion matters, say so in the prompt ("describe only the first 30 seconds", "focus on the conclusion")
+- For specific portions, say so in the prompt ("focus on the conclusion", "describe only the first minute")
 - Custom prompts only work in analyze mode (not transcript mode)
-- Transcript mode may return raw text instead of structured JSON if Omni has issues
-- Practical size limit: tested working up to ~16 MB base64 payload (~3 min of 480p video) per call
+- Single-video payload limit: ~9 MB after base64 (gateway body cap). Beyond that, use the chunked workflow.
+- Per-chunk analyses use a small token budget (1024) so the synthesis pass has room to work; the synthesis call gets 4096
