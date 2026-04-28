@@ -446,4 +446,4 @@ nemoclaw onboard
 
 ## See Also
 
-- [**nemoclaw-with-omni-subagent**](../nemoclaw-with-omni-subagent/README.md) — Compact reference for the same setup with raw config files (`openclaw.json`, `policy.yaml`, `TOOLS.md`), overlay-mount instructions, and detailed log-parsing examples. Originally from [Haran Kumar's repo](https://gitlab-master.nvidia.com/hshivkumar/nemoclaw-with-omni-subagent).
+- [**openclaw-omni-demo**](../openclaw-omni-demo/README.md) — Compact reference for the same setup with raw config files (`openclaw.json`, `policy.yaml`, `TOOLS.md`), overlay-mount instructions, and detailed log-parsing examples. Originally from [Haran Kumar's repo](https://gitlab-master.nvidia.com/hshivkumar/nemoclaw-with-omni-subagent).
