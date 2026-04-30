@@ -23,7 +23,7 @@ echo
 # ── 1. fix the two display labels (gateway route is set separately) ──
 echo "[1/5] fixing display labels"
 openshell sandbox exec -n "$SANDBOX" -- bash -c \
-  "sed -i 's|nvidia/nemotron-3-super-120b-a12b|nvidia/nemotron-3-nano-omni-reasoning-30b-a3b|' \
+  "sed -i 's|nvidia/nemotron-3-super-120b-a12b|nvidia/nemotron-3-nano-omni-30b-a3b-reasoning|' \
    /sandbox/.hermes-data/config.yaml" 2>/dev/null || true
 
 python3 - <<PY
@@ -32,7 +32,7 @@ p = pathlib.Path.home() / '.nemoclaw' / 'sandboxes.json'
 if p.exists():
     d = json.load(open(p))
     if "$SANDBOX" in d.get("sandboxes", {}):
-        d["sandboxes"]["$SANDBOX"]["model"] = "nvidia/nemotron-3-nano-omni-reasoning-30b-a3b"
+        d["sandboxes"]["$SANDBOX"]["model"] = "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning"
         json.dump(d, open(p, "w"), indent=4)
         print("    host metadata updated")
 PY

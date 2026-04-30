@@ -12,26 +12,60 @@ running the Omni model (text + image).
 | `openclaw.json` | Reference config with Omni provider + agents list (for comparison) |
 | `TOOLS.md` | Workspace file that teaches the main agent to delegate image tasks |
 | `policy.yaml` | Patched OpenShell network policy (with `node` in nvidia binaries) |
+| `scripts/apply-omni-subagent.sh` | Repeatable helper that patches policy, `openclaw.json`, auth profiles, and `TOOLS.md` |
+| `scripts/fix-spark-gateway.sh` | Recovery helper for DGX Spark/restricted netns gateway crashes |
+
+## Known-good model IDs
+
+Use the public NVIDIA catalog IDs below:
+
+```text
+Main text model:  nvidia/nemotron-3-super-120b-a12b
+Omni model:       nvidia/nemotron-3-nano-omni-30b-a3b-reasoning
+```
+
+Older demo notes used private or pre-release Omni IDs. If you see `model_not_found`
+or `401` from the Omni provider, confirm the model ID and that your NVIDIA API key
+has access to the Omni model.
 
 ## Step 1: Install NemoClaw
 
 ```bash
 curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
-source ~/.bashrc
+source ~/.bashrc   # or source ~/.zshrc if you use zsh
 ```
 
-## Step 2: Onboard
+Verify:
+
+```bash
+nemoclaw --version
+openshell --version
+```
+
+## Step 2: Onboard an OpenClaw sandbox
 
 ```bash
 nemoclaw onboard
 ```
 
 When prompted:
+
 1. **Inference**: Choose `1` (NVIDIA Endpoints)
 2. **API Key**: Paste your NVIDIA API key (starts with `nvapi-`)
 3. **Model**: Choose `1` (Nemotron 3 Super 120B)
 4. **Sandbox name**: Enter a name like `hclaw`
-5. **Policy presets**: Choose "Balanced" and accept suggested (pypi, npm)
+5. **Policy presets**: Choose "Balanced" and accept suggested `pypi` and `npm`
+
+If you are running non-interactively, use `NEMOCLAW_SANDBOX_NAME` rather than
+`--name` for older NemoClaw releases that do not expose `nemoclaw onboard --name`:
+
+```bash
+NEMOCLAW_SANDBOX_NAME=hclaw \
+NEMOCLAW_NON_INTERACTIVE=1 \
+NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 \
+NVIDIA_API_KEY="$NVIDIA_API_KEY" \
+nemoclaw onboard --fresh --non-interactive --yes-i-accept-third-party-software
+```
 
 Wait for the build + image upload to finish. Save the tokenized URL it prints.
 
@@ -40,437 +74,247 @@ Wait for the build + image upload to finish. Save the tokenized URL it prints.
 Everything below uses these — set them once:
 
 ```bash
-SANDBOX=hclaw
-DOCKER_CTR=openshell-cluster-nemoclaw
-source <(jq -r 'to_entries[] | "export \(.key)=\(.value | @sh)"' ~/.nemoclaw/credentials.json)   # loads NVIDIA_API_KEY
+export SANDBOX=hclaw
+export DOCKER_CTR=openshell-cluster-nemoclaw
+export NVIDIA_API_KEY=nvapi-...   # must have Omni access
 ```
 
-## Step 4: Update the OpenShell network policy
+NemoClaw may not leave a plaintext `~/.nemoclaw/credentials.json` on current
+releases, so do not rely on sourcing that file. Keep the key in your shell only
+for the setup step; the helper writes it into the vision operator's in-sandbox
+auth profile and keeps it out of `openclaw.json`.
 
-OpenShell's Privacy Router (`inference.local`) is currently a single-model endpoint — it
-rewrites every request to the one configured model (Super 120B). For now the Omni model
-must bypass the Privacy Router and call the NVIDIA API directly.
+## Step 4: Apply the Omni sub-agent configuration
 
-```[NOTE]
-Support for multiple models in OpenShell is on the roadmap and once it lands the following section will be simplified.
-
-See https://github.com/NVIDIA/OpenShell/issues/896 for more information.
-```
-
-The default sandbox policy allows `integrate.api.nvidia.com` and
-`inference-api.nvidia.com`, but only for the `claude` and `openclaw` binaries.
-**The OpenClaw gateway runs as `/usr/local/bin/node`**, so it must be added to
-the nvidia policy's allowed binary list. Without this, the gateway gets silent
-connection failures that surface as `LLM request timed out.` or
-`Connection error.` in the logs.
-
-### 4a. Export the current policy
+Run the helper from this directory:
 
 ```bash
-openshell policy get $SANDBOX --full > /tmp/raw-policy.txt
+bash scripts/apply-omni-subagent.sh
 ```
 
-The output includes 7 lines of metadata header (Version, Hash, Status, etc.)
-followed by a `---` separator. Strip them to get clean YAML:
+For fully scripted smoke tests, seed a small demo identity so the first OpenClaw
+turn is not intercepted by the default `BOOTSTRAP.md` identity conversation:
 
 ```bash
-sed -n '8,$p' /tmp/raw-policy.txt > /tmp/current-policy.yaml
+SEED_DEMO_IDENTITY=1 bash scripts/apply-omni-subagent.sh
 ```
 
-### 4b. Add `/usr/local/bin/node` to the `nvidia` policy block
+The helper performs the manual recipe steps safely and creates a backup directory
+under `/tmp` with `UNDO.txt` instructions. It:
 
-Open `/tmp/current-policy.yaml` in your editor and find the `nvidia:` section and add `node` to its `binaries` list. Before:
+1. Exports the active policy, adds `/usr/local/bin/node` to the `nvidia` policy
+   block if needed, and reloads the policy.
+2. Patches `/sandbox/.openclaw/openclaw.json` to add:
+   - provider `nvidia-omni` pointing at `https://integrate.api.nvidia.com/v1`
+   - `main` + `vision-operator` entries in `agents.list`
+   - sub-agent limits and a longer timeout
+   - `plugins.entries.bonjour.enabled=false` because mDNS discovery is not
+     required for this demo and can fail inside restricted network namespaces
+3. Recomputes `/sandbox/.openclaw/.config-hash`.
+4. Writes the current OpenClaw auth profile format for the vision operator:
 
-```yaml
-    binaries:
-    - path: /usr/local/bin/claude
-    - path: /usr/local/bin/openclaw
-```
+   ```json
+   {
+     "version": 1,
+     "profiles": {
+       "nvidia-omni:default": {
+         "type": "api_key",
+         "provider": "nvidia-omni",
+         "key": "<nvapi-key>",
+         "displayName": "NVIDIA Omni"
+       }
+     },
+     "order": {
+       "nvidia-omni": ["nvidia-omni:default"]
+     }
+   }
+   ```
 
-After:
+5. Copies `TOOLS.md` into the workspace.
+6. Creates `/sandbox/.openclaw/tasks -> /sandbox/.openclaw-data/tasks` for
+   OpenClaw builds that expect a writable task-registry path.
 
-```yaml
-    binaries:
-    - path: /usr/local/bin/claude
-    - path: /usr/local/bin/openclaw
-    - path: /usr/local/bin/node
-```
-
-### 4c. Apply the updated policy
-
-Note the `--policy` flag — the file path is not positional:
+Verify the config:
 
 ```bash
-openshell policy set --policy /tmp/current-policy.yaml $SANDBOX
+openshell sandbox exec -n "$SANDBOX" -- openclaw agents list
 ```
 
-You should see:
+Expected:
 
-```
-✓ Policy version N submitted (hash: ...)
+```text
+Agents:
+- main (default)
+  Model: inference/nvidia/nemotron-3-super-120b-a12b
+- vision-operator
+  Model: nvidia-omni/nvidia/nemotron-3-nano-omni-30b-a3b-reasoning
 ```
 
-Verify with:
+## Step 5: Ensure the OpenClaw gateway is reachable
+
+Check gateway health from inside the sandbox:
 
 ```bash
-openshell policy get $SANDBOX --full | grep -A 50 "nvidia:" | grep node
+openshell sandbox exec -n "$SANDBOX" -- bash -lc \
+  'source /tmp/nemoclaw-proxy-env.sh 2>/dev/null || true; openclaw gateway status'
 ```
 
-## Step 5: Patch openclaw.json in the sandbox
+If the output says `Connectivity probe: ok`, continue.
 
-The sandbox config only has the main inference provider. We add:
-- `nvidia-omni` provider pointing directly at the NVIDIA API (bypasses
-  the Privacy Router, which only serves the Super 120B model)
-- `agents.list` defining `main` and `vision-operator` sub-agent
-- `agents.defaults.timeoutSeconds: 300` to prevent sub-agent announce timeouts
+### DGX Spark / restricted netns recovery
 
-### 5a. Create the patch script
+On DGX Spark or other restricted network namespaces, a stale OpenClaw gateway can
+exit with messages like:
 
-```bash
-cat > /tmp/update_openclaw.py << 'PYSCRIPT'
-import json, sys
-
-config = json.load(sys.stdin)
-
-api_key = sys.argv[1] if len(sys.argv) > 1 else "unused"
-
-config["models"]["providers"]["nvidia"] = {
-    "baseUrl": "https://integrate.api.nvidia.com/v1",
-    "apiKey": api_key,
-    "api": "openai-completions",
-    "models": [
-        {
-            "id": "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning",
-            "name": "nvidia/nvidia/nemotron-3-nano-omni-30b-a3b-reasoning",
-            "reasoning": True,
-            "input": ["text", "image"],
-            "cost": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0},
-            "contextWindow": 131072,
-            "maxTokens": 16384
-        }
-    ]
-}
-
-config["agents"]["defaults"]["subagents"] = {
-    "maxConcurrent": 4,
-    "maxSpawnDepth": 1
-}
-
-config["agents"]["defaults"]["timeoutSeconds"] = 300
-
-config["agents"]["list"] = [
-    {
-        "id": "main",
-        "model": {"primary": "inference/nvidia/nemotron-3-super-120b-a12b"},
-        "subagents": {"allowAgents": ["vision-operator"]},
-        "tools": {"profile": "full"}
-    },
-    {
-        "id": "vision-operator",
-        "workspace": "/sandbox/.openclaw/workspace",
-        "model": {"primary": "nvidia/nvidia/nemotron-3-nano-omni-30b-a3b-reasoning"},
-        "tools": {
-            "profile": "full",
-            "deny": ["message", "sessions_spawn"]
-        }
-    }
-]
-
-json.dump(config, sys.stdout, indent=2)
-PYSCRIPT
+```text
+gateway closed (1006)
+uv_interface_addresses returned Unknown system error
 ```
 
-### 5b. Fetch, patch, push
+Run the recovery helper after `apply-omni-subagent.sh`:
 
 ```bash
-# Fetch current config
-docker exec $DOCKER_CTR kubectl exec -n openshell $SANDBOX \
-  -- cat /sandbox/.openclaw/openclaw.json > /tmp/remote_openclaw.json
-
-# Patch it (pass your NVIDIA API key as an argument)
-python3 /tmp/update_openclaw.py "$NVIDIA_API_KEY" \
-  < /tmp/remote_openclaw.json > /tmp/updated_openclaw.json
-
-# Unlock config + hash
-docker exec $DOCKER_CTR kubectl exec -n openshell $SANDBOX \
-  -- chmod 644 /sandbox/.openclaw/openclaw.json
-docker exec $DOCKER_CTR kubectl exec -n openshell $SANDBOX \
-  -- chmod 644 /sandbox/.openclaw/.config-hash
-
-# Write patched config
-docker exec -i $DOCKER_CTR kubectl exec -i -n openshell $SANDBOX \
-  -- tee /sandbox/.openclaw/openclaw.json < /tmp/updated_openclaw.json > /dev/null
-
-# Regenerate the integrity hash (the entrypoint checks this on startup)
-docker exec $DOCKER_CTR kubectl exec -n openshell $SANDBOX \
-  -- /bin/bash -c "cd /sandbox/.openclaw && sha256sum openclaw.json > .config-hash"
-
-# Lock everything back
-docker exec $DOCKER_CTR kubectl exec -n openshell $SANDBOX \
-  -- chmod 444 /sandbox/.openclaw/openclaw.json
-docker exec $DOCKER_CTR kubectl exec -n openshell $SANDBOX \
-  -- chmod 444 /sandbox/.openclaw/.config-hash
+bash scripts/fix-spark-gateway.sh
 ```
 
-### 5c. Create auth-profiles.json for the vision-operator
+It uses the NemoClaw proxy/guard environment and starts a foreground-style
+sandbox gateway in the background. Logs are in `/tmp/gateway-manual.log` inside
+the sandbox; the PID is in `/tmp/gateway-manual.pid`.
 
-The gateway strips API keys from `openclaw.json` when creating per-agent config
-files. Each agent has its own auth store at
-`/sandbox/.openclaw-data/agents/<id>/agent/auth-profiles.json`. The main agent
-doesn't need one (it uses the Privacy Router at `inference.local`), but the
-vision-operator calls the NVIDIA API directly and needs the key.
+## Step 6: Upload a test image
+
+Use any JPG/PNG. This creates a tiny red test image without requiring external
+URLs:
 
 ```bash
-# Create the auth profile
-cat > /tmp/auth-profiles.json << EOF
-{
-  "providers": {
-    "nvidia": {
-      "apiKey": "$NVIDIA_API_KEY"
-    }
-  }
-}
-EOF
+python3 - <<'PY'
+import base64
+from pathlib import Path
+# 1x1 red PNG
+png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADUlEQVR42mP8z8BQDwAFgwJ/lk3Q3wAAAABJRU5ErkJggg=="
+Path("red.png").write_bytes(base64.b64decode(png))
+PY
 
-# Write it to the vision-operator's agent directory
-docker exec -i $DOCKER_CTR kubectl exec -i -n openshell $SANDBOX \
-  -- bash -c 'mkdir -p /sandbox/.openclaw-data/agents/vision-operator/agent/ && chown -R sandbox:sandbox /sandbox/.openclaw-data/agents/vision-operator'
-  
-docker exec -i $DOCKER_CTR kubectl exec -i -n openshell $SANDBOX \
-  -- tee /sandbox/.openclaw-data/agents/vision-operator/agent/auth-profiles.json \
-  < /tmp/auth-profiles.json > /dev/null
+openshell sandbox upload "$SANDBOX" red.png /sandbox/.openclaw-data/workspace/
 ```
 
-If you skip this step, the gateway will log `No API key found for provider
-"nvidia-omni"` and fall back to the text-only Super 120B model, producing
-hallucinated image descriptions.
-
-## Step 6: Copy TOOLS.md into the sandbox workspace
-
-TOOLS.md lives in the workspace directory so both agents read it as part of
-their context. It contains agent-specific instructions:
-- **main**: Told it's text-only, must delegate image tasks via `sessions_spawn`
-- **vision-operator**: Told it CAN see images, must use `read` directly, must
-  NOT try `sessions_spawn` or `message`
-
-Both agents are told to use `/sandbox/.openclaw-data/workspace/` for all file
-reads and writes.
-
-Download the `TOOLS.md` file from this repo and copy it into the workspace.
+If `openshell sandbox upload` does not place the file where expected, copy it
+through the gateway pod directly:
 
 ```bash
-docker exec -i $DOCKER_CTR kubectl exec -i -n openshell $SANDBOX \
-  -- tee /sandbox/.openclaw-data/workspace/TOOLS.md < TOOLS.md > /dev/null
+docker exec -i "$DOCKER_CTR" kubectl exec -i -n openshell "$SANDBOX" -- \
+  tee /sandbox/.openclaw-data/workspace/red.png < red.png > /dev/null
 ```
 
-## Step 7: Upload test files and verify
+## Step 7: Verify direct Omni vision
 
-Upload images to the workspace directory (NOT `/sandbox/` root):
+Run the vision operator directly:
 
 ```bash
-wget -O doorbell.jpg https://source.roboflow.com/sOfbQhw8a0UEQ11fuaBxY45A0Wf1/0j5TIUPHOFoP4hmUlOzE/original.jpg
-openshell sandbox upload $SANDBOX doorbell.jpg /sandbox/.openclaw-data/workspace/
+openshell sandbox exec -n "$SANDBOX" -- bash -lc \
+  'source /tmp/nemoclaw-proxy-env.sh 2>/dev/null || true; \
+   openclaw agent --agent vision-operator \
+     --message "Describe the image at /sandbox/.openclaw-data/workspace/red.png in one sentence." \
+     --session-id direct-vision-test --timeout 300'
 ```
 
-From inside the sandbox (or via `openclaw tui`):
+Expected: the answer should describe a solid red image. If it falls back to the
+text-only Super model or says it cannot see the image, re-check the `nvidia-omni`
+auth profile and model ID.
+
+## Step 8: Verify main-agent delegation
+
+Ask `main` to delegate to `vision-operator` and write a result file:
 
 ```bash
-openclaw tui
+openshell sandbox exec -n "$SANDBOX" -- bash -lc \
+  'source /tmp/nemoclaw-proxy-env.sh 2>/dev/null || true; \
+   openclaw agent --agent main \
+     --message "Use agents_list to confirm vision-operator is available, then delegate to vision-operator with sessions_spawn to describe /sandbox/.openclaw-data/workspace/red.png. Write the final one-sentence description to /sandbox/.openclaw-data/workspace/image-description.md and tell me what you wrote." \
+     --session-id main-vision-delegation-test --timeout 420'
 ```
 
-Then ask:
-
-> Describe the image doorbell.jpg in the workspace and write the description to image-description.md
-
-The main agent should call `sessions_spawn` with `agentId: "vision-operator"`
-rather than trying to read the image itself. The vision-operator will analyze
-the image and return the result through the sessions system.
-
-## Tailing logs
-
-From inside the sandbox:
+Confirm the file was written. Sub-agent completion is push-based, so the CLI can
+return a short `completed` marker before the final write is visible; wait until
+the file appears:
 
 ```bash
-# Gateway log (human-readable)
-tail -f /tmp/gateway.log
-
-# Detailed JSON log
-tail -f /tmp/openclaw/openclaw-$(date -u +%Y-%m-%d).log
+for _ in $(seq 1 60); do
+  if openshell sandbox exec -n "$SANDBOX" --       test -s /sandbox/.openclaw-data/workspace/image-description.md; then
+    openshell sandbox exec -n "$SANDBOX" --       cat /sandbox/.openclaw-data/workspace/image-description.md
+    break
+  fi
+  sleep 1
+done
 ```
 
-From the host (requires overlay mount, see below):
+If the first run reports a pending device scope upgrade, approve the local CLI
+request and retry:
 
 ```bash
-sudo tail -f ~/sandbox-linked/tmp/gateway.log
-```
+openshell sandbox exec -n "$SANDBOX" -- bash -lc \
+  'source /tmp/nemoclaw-proxy-env.sh 2>/dev/null || true; openclaw devices list --json'
 
-### Reading sub-agent session logs
-
-```bash
-# List vision-operator sessions (most recent first)
-ls -lt /sandbox/.openclaw-data/agents/vision-operator/sessions/*.jsonl
-
-# Parse a session log for key events
-cat /sandbox/.openclaw-data/agents/vision-operator/sessions/<session-id>.jsonl | python3 -c "
-import sys, json
-for line in sys.stdin:
-    obj = json.loads(line.strip())
-    if obj.get('type') == 'message':
-        m = obj['message']
-        role, err, stop = m.get('role',''), m.get('errorMessage',''), m.get('stopReason','')
-        content = m.get('content','')
-        if role == 'assistant':
-            if isinstance(content, list):
-                for c in content:
-                    if c.get('type') == 'text': print(f'ASSISTANT: {c[\"text\"][:500]}')
-                    elif c.get('type') == 'thinking': print(f'THINKING: {c.get(\"thinking\",\"\")[:300]}')
-                    elif c.get('type') == 'toolCall': print(f'TOOL: {c.get(\"name\")} {json.dumps(c.get(\"arguments\",{}))[:200]}')
-            if err: print(f'ERROR: {err}')
-            if stop: print(f'STOP: {stop}')
-"
+openshell sandbox exec -n "$SANDBOX" -- bash -lc \
+  'source /tmp/nemoclaw-proxy-env.sh 2>/dev/null || true; openclaw devices approve <requestId> --json'
 ```
 
 ## Troubleshooting
 
-### "LLM request timed out." / "Connection error."
+### `401 status code` from `nvidia-omni`
 
-The most common cause is the **OpenShell network policy** missing
-`/usr/local/bin/node` in the `nvidia` binaries list. The gateway runs as `node`
-and needs explicit permission to reach `integrate.api.nvidia.com`.
+Usually one of:
 
-Verify:
+- `NVIDIA_API_KEY` does not have access to the Omni model
+- auth profile uses the old `providers`/`apiKey` shape instead of the current
+  `version` + `profiles` + `key` shape
+- provider/model names do not line up (`nvidia-omni/<model-id>` in the agent,
+  provider key `nvidia-omni` in `models.providers`)
+
+Re-run:
+
 ```bash
-openshell policy get $SANDBOX --full | sed -n '/^  nvidia:/,/^  [a-z]/p'
+NVIDIA_API_KEY=nvapi-... bash scripts/apply-omni-subagent.sh
 ```
 
-If `node` is missing from the binaries, redo Step 4.
+### `LLM request timed out.` / `Connection error.`
 
-### "No API key found for provider nvidia-omni"
+Verify the `nvidia` policy block includes `/usr/local/bin/node`:
 
-The vision-operator's `auth-profiles.json` is missing or doesn't contain the
-`nvidia-omni` key. Redo Step 5c. The main agent does NOT need this file — it
-uses the Privacy Router.
+```bash
+openshell policy get "$SANDBOX" --full | sed -n '/^  nvidia:/,/^  [a-z]/p'
+```
 
-### "Action send requires a target." / "Unknown channel: webchat"
+Re-run the helper if `node` is missing.
 
-The vision-operator has the `message` tool available and is trying to deliver
-results through an external channel. Ensure `"deny": ["message", "sessions_spawn"]`
-is set in the vision-operator's tools config.
+### `gateway closed (1006)` or `uv_interface_addresses`
 
-### Sub-agent announce timeouts (gateway timeout after 60000ms)
+Run:
 
-The gateway has a 60s default timeout for sub-agent announce calls. If the main
-agent's LLM is busy when the announce arrives, it can time out. Setting
-`agents.defaults.timeoutSeconds: 300` in `openclaw.json` raises this limit.
+```bash
+bash scripts/fix-spark-gateway.sh
+```
+
+Then approve any pending local CLI device scope upgrade and retry the command.
+
+### The agent asks "Who am I?" instead of analyzing the image
+
+The default OpenClaw workspace still has `BOOTSTRAP.md`. Either finish the
+first-run identity flow in the TUI, or run:
+
+```bash
+SEED_DEMO_IDENTITY=1 bash scripts/apply-omni-subagent.sh
+```
 
 ### Agent reads wrong path / EISDIR error
 
-Agents may try to read `/sandbox/.openclaw/workspace` (a symlink) instead of
-the canonical `/sandbox/.openclaw-data/workspace/`. The TOOLS.md file explicitly
-instructs both agents to use the `-data` path. If you see path errors, verify
-TOOLS.md is present and up to date in the workspace.
-
-### Stale sessions
-
-If you hit `session file locked` errors or the agent stops responding, clear all
-session data:
-
-```bash
-docker exec $DOCKER_CTR kubectl exec -n openshell $SANDBOX \
-  -- rm -rf /sandbox/.openclaw-data/agents/*/sessions/*
-```
-
-## Do NOT run `openclaw gateway restart`
-
-The sandbox runs in a container without systemd. `openclaw gateway restart` will
-kill the gateway but cannot restart it, leaving you with a dead sandbox. If the
-gateway is down, destroy and recreate the sandbox (see below).
-
-## Optional: Mount sandbox filesystem on the host
-
-Lets you browse sandbox files from Cursor's file explorer.
-
-```bash
-# Get the sandbox container ID
-CID=$(docker exec $DOCKER_CTR kubectl get pod $SANDBOX -n openshell \
-  -o jsonpath='{.status.containerStatuses[0].containerID}' | sed 's|containerd://||')
-
-# Get the overlay snapshot number
-docker exec $DOCKER_CTR ctr -n k8s.io \
-  -a /run/k3s/containerd/containerd.sock \
-  snapshots --snapshotter overlayfs mounts / $CID
-# Note the upperdir snapshot number (e.g. 86) and all lowerdir numbers
-
-# Mount it
-VOLUME=/var/lib/docker/volumes/openshell-cluster-nemoclaw/_data/agent/containerd/io.containerd.snapshotter.v1.overlayfs/snapshots
-mkdir -p ~/sandbox-linked
-sudo mount -t overlay overlay \
-  -o "upperdir=$VOLUME/86/fs,lowerdir=$VOLUME/82/fs:$VOLUME/81/fs:...:$VOLUME/61/fs,workdir=$VOLUME/86/work" \
-  ~/sandbox-linked
-
-# Sandbox root is at ~/sandbox-linked/sandbox/
-# Config:    ~/sandbox-linked/sandbox/.openclaw/openclaw.json
-# Workspace: ~/sandbox-linked/sandbox/.openclaw-data/workspace/
-# Logs:      ~/sandbox-linked/tmp/gateway.log
-```
-
-This mount breaks when the pod restarts (new container = new snapshot number).
-Unmount and redo if that happens:
-
-```bash
-sudo umount ~/sandbox-linked
-# Re-run the steps above with the new snapshot number
-```
-
-## How it all fits together
-
-```
-Host
-├── docker exec → openshell-cluster-nemoclaw (k3s cluster)
-│   └── kubectl exec → hclaw pod (sandbox)
-│       ├── /sandbox/.openclaw/
-│       │   ├── openclaw.json      ← root-owned, read-only config
-│       │   ├── .config-hash       ← SHA256 integrity check
-│       │   ├── logs/              ← config audit log
-│       │   └── workspace → /sandbox/.openclaw-data/workspace  (symlink)
-│       ├── /sandbox/.openclaw-data/
-│       │   ├── workspace/
-│       │   │   ├── TOOLS.md       ← agent reads this for instructions
-│       │   │   ├── AGENTS.md, SOUL.md, etc.
-│       │   ├── agents/main/sessions/            ← main agent session logs
-│       │   └── agents/vision-operator/
-│       │       ├── agent/auth-profiles.json     ← nvidia-omni API key
-│       │       └── sessions/                    ← vision-operator session logs
-│       └── /tmp/
-│           ├── gateway.log        ← gateway stdout/stderr
-│           └── openclaw/          ← daily JSON logs
-```
-
-### Key points
-
-- `.openclaw/` is root-owned, read-only — always `chmod 644` before writing, `chmod 444` after
-- `.openclaw-data/` is sandbox-writable — TOOLS.md goes here (via the workspace symlink)
-- The entrypoint (`nemoclaw-start`) checks `.config-hash` on startup — always regenerate it
-- The gateway runs as `/usr/local/bin/node` under a separate `gateway` user
-- Hot-reload picks up new providers and `agents.list` when the config changes
-- `inference.local` (Privacy Router) is single-model — it rewrites all requests to Super 120B
-- The Omni provider bypasses the Privacy Router via a direct NVIDIA API route + network policy
-- The `nvidia` network policy **must** include `/usr/local/bin/node` for the gateway to reach the API
-
-### Config reference
-
-| Setting | Where | Why |
-|---------|-------|-----|
-| `agents.defaults.timeoutSeconds: 300` | Defaults | Prevents sub-agent announce timeouts (default is 60s) |
-| `agents.defaults.subagents.maxConcurrent: 4` | Defaults | Limits concurrent sub-agents |
-| `agents.defaults.subagents.maxSpawnDepth: 1` | Defaults | Prevents sub-agents from spawning their own sub-agents |
-| `tools.profile: "full"` | Both agents | Ensures all tools are available |
-| `tools.deny: ["message", "sessions_spawn"]` | Vision-operator | Prevents external channel delivery (`message`) and re-delegation (`sessions_spawn`) |
+Use `/sandbox/.openclaw-data/workspace/`, not `/sandbox/.openclaw/workspace`.
+`TOOLS.md` repeats this for both agents.
 
 ## Starting over
 
 ```bash
-nemoclaw $SANDBOX destroy --yes
-nemoclaw onboard
-# Repeat steps 3–7
+nemoclaw "$SANDBOX" destroy --yes
+NEMOCLAW_SANDBOX_NAME="$SANDBOX" nemoclaw onboard
+# Repeat steps 3-8
 ```

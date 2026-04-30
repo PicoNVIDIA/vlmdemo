@@ -33,12 +33,12 @@
       },
       "nvidia-omni": {
         "baseUrl": "https://integrate.api.nvidia.com/v1",
-        "apiKey": "<your-nvapi-key>",
+        "apiKey": "unused",
         "api": "openai-completions",
         "models": [
           {
-            "id": "private/nvidia/nemotron-3-nano-omni-reasoning-30b-a3b",
-            "name": "nvidia-omni/private/nvidia/nemotron-3-nano-omni-reasoning-30b-a3b",
+            "id": "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning",
+            "name": "nvidia-omni/nvidia/nemotron-3-nano-omni-30b-a3b-reasoning",
             "reasoning": true,
             "input": [
               "text",
@@ -86,7 +86,7 @@
       {
         "id": "vision-operator",
         "model": {
-          "primary": "nvidia-omni/private/nvidia/nemotron-3-nano-omni-reasoning-30b-a3b"
+          "primary": "nvidia-omni/nvidia/nemotron-3-nano-omni-30b-a3b-reasoning"
         },
         "tools": {
           "profile": "full",
@@ -127,5 +127,12 @@
   "meta": {
     "lastTouchedVersion": "2026.3.11",
     "lastTouchedAt": "2026-03-30T17:52:56.359Z"
+  },
+  "plugins": {
+    "entries": {
+      "bonjour": {
+        "enabled": false
+      }
+    }
   }
 }

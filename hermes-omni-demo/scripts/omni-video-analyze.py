@@ -31,7 +31,7 @@ Usage:
 import sys, json, base64, urllib.request, os, subprocess, re, argparse, struct
 
 API_URL = "https://inference.local/v1/chat/completions"
-MODEL = "private/nvidia/nemotron-3-nano-omni-reasoning-30b-a3b"
+MODEL = "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning"
 
 AUDIO_EXTS = {"mp3", "wav", "m4a", "aac", "ogg", "flac"}
 IMAGE_EXTS = {"png", "jpg", "jpeg", "gif", "webp"}

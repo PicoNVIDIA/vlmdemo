@@ -25,7 +25,7 @@ Sources:
 import sys, json, urllib.request, urllib.parse, urllib.error, argparse, textwrap
 
 _UA = {
-    "User-Agent": "NemoClaw-HermesOmni-Demo/1.0 (https://github.com/PicoNVIDIA/vlmdemo)",
+    "User-Agent": "NemoClaw-HermesOmni-Demo/1.0 (https://github.com/brevdev/nemoclaw-demos)",
     "Accept": "application/json",
 }
 

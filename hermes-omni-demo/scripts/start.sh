@@ -2,16 +2,20 @@
 # start.sh — bring up the demo on a single port.
 #
 # What it does:
-#   1. Verify the sandbox is Ready
-#   2. Install UI dependencies if missing
-#   3. Build the UI if dist/ is missing
-#   4. Install the server's Python deps if missing
-#   5. Run uvicorn — it serves both /api/* and the built UI from one port
+#   1. Verify host media helpers are installed
+#   2. Verify the sandbox is Ready
+#   3. Install UI dependencies if missing
+#   4. Build the UI if dist/ is missing
+#   5. Create/use a local Python virtualenv for server deps
+#   6. Run uvicorn — it serves both /api/* and the built UI from one port
 #
 # Open http://<host>:8765 in a browser.
 #
 # Usage:
 #   SANDBOX=my-hermes bash scripts/start.sh
+#
+# Optional:
+#   VENV_DIR=.venv PORT=8766 HOST=127.0.0.1 bash scripts/start.sh
 #
 # To stop:  bash scripts/stop.sh   (or Ctrl-C if you ran in foreground)
 set -euo pipefail
@@ -20,10 +24,26 @@ SANDBOX="${SANDBOX:-my-hermes}"
 PORT="${PORT:-8765}"
 HOST="${HOST:-0.0.0.0}"
 HERE=$(cd "$(dirname "$0")/.." && pwd)
+PYTHON_BIN="${PYTHON_BIN:-python3}"
+VENV_DIR="${VENV_DIR:-$HERE/.venv}"
 
 echo "→ sandbox: $SANDBOX"
 echo "→ url:     http://localhost:$PORT"
 echo
+
+# ── 0. host helper commands ──
+missing=()
+for cmd in ffmpeg ffprobe pdftoppm lsof "$PYTHON_BIN" npm; do
+    if ! command -v "$cmd" >/dev/null 2>&1; then
+        missing+=("$cmd")
+    fi
+done
+if (( ${#missing[@]} > 0 )); then
+    echo "✗ missing host command(s): ${missing[*]}" >&2
+    echo "  Ubuntu/Debian: sudo apt-get update && sudo apt-get install -y ffmpeg poppler-utils lsof python3-venv" >&2
+    echo "  Also make sure Node/npm are installed and on PATH." >&2
+    exit 1
+fi
 
 # ── 1. sandbox Ready? ──
 # `nemoclaw status` colors its output with ANSI escapes that sit between
@@ -50,12 +70,21 @@ if [[ ! -d "$HERE/ui/dist" ]] || [[ "$HERE/ui/src" -nt "$HERE/ui/dist" ]]; then
 fi
 echo "✓ UI built at $HERE/ui/dist"
 
-# ── 4. server deps ──
-if ! python3 -c "import fastapi, yaml" 2>/dev/null; then
-    echo "→ installing server dependencies (one-time)"
-    pip install --quiet -r "$HERE/server/requirements.txt"
+# ── 4. server deps in local virtualenv ──
+if [[ ! -x "$VENV_DIR/bin/python" ]]; then
+    echo "→ creating Python virtualenv at $VENV_DIR"
+    if ! "$PYTHON_BIN" -m venv "$VENV_DIR"; then
+        echo "✗ failed to create virtualenv. On Ubuntu/Debian install python3-venv:" >&2
+        echo "  sudo apt-get update && sudo apt-get install -y python3-venv" >&2
+        exit 1
+    fi
 fi
-echo "✓ server deps ready"
+PYTHON="$VENV_DIR/bin/python"
+if ! "$PYTHON" -c "import fastapi, uvicorn, yaml, multipart" 2>/dev/null; then
+    echo "→ installing server dependencies into $VENV_DIR (one-time)"
+    "$PYTHON" -m pip install --quiet -r "$HERE/server/requirements.txt"
+fi
+echo "✓ server deps ready ($PYTHON)"
 
 # ── 5. port available? ──
 if lsof -iTCP:"$PORT" -sTCP:LISTEN -P -n 2>/dev/null | grep -q LISTEN; then
@@ -72,4 +101,4 @@ echo "  Ctrl-C to stop"
 echo
 cd "$HERE/server"
 exec env SANDBOX="$SANDBOX" \
-    python3 -m uvicorn server:app --host "$HOST" --port "$PORT"
+    "$PYTHON" -m uvicorn server:app --host "$HOST" --port "$PORT"

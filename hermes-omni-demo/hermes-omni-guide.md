@@ -26,15 +26,26 @@ All five modalities run through one skill. The agent picks the tool. The sandbox
 
 ## Prerequisites
 
+### Ubuntu/Debian host packages
+
+Install the media/PDF helpers before running the smoke tests or the browser UI:
+
+```bash
+sudo apt-get update
+sudo apt-get install -y ffmpeg poppler-utils lsof python3-venv
+```
+
+`ffmpeg` provides both `ffmpeg` and `ffprobe`. The UI startup script checks these commands up front and creates a local Python virtualenv for server dependencies, which avoids Ubuntu 24.04's externally-managed Python (`PEP 668`) error.
+
 | Requirement | Details |
 |---|---|
 | Linux host | Brev instance, DGX, or any Docker-capable Linux. No GPU needed. |
 | Docker | Installed and running. |
 | NVIDIA API key | Starts with `nvapi-`, with Omni access. Get one at [build.nvidia.com](https://build.nvidia.com) → API Keys. |
-| `ffmpeg` | `apt install -y ffmpeg`. Needed for the synthetic test clip and for chunking long videos. |
-| `poppler-utils` | `apt install -y poppler-utils`. Needed for PDF rendering (`pdftoppm`). |
+| `ffmpeg` / `ffprobe` | `sudo apt-get update && sudo apt-get install -y ffmpeg`. Needed for video upload transcoding, the synthetic test clip, and chunking long videos. |
+| `poppler-utils` | `sudo apt-get install -y poppler-utils`. Needed for PDF rendering (`pdftoppm`). |
 | Node 20+ and `npm` | Needed to build the web UI. |
-| Python 3.10+ | For the FastAPI backend. |
+| Python 3.10+ with `venv` | For the FastAPI backend. On Ubuntu/Debian install `python3-venv`; `scripts/start.sh` creates a local `.venv` so system Python is not modified. |
 
 ---
 
@@ -47,15 +58,15 @@ If you've already got NemoClaw installed, this is the short version. The longer 
 curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash && source ~/.bashrc
 
 # 2. clone this cookbook
-git clone https://github.com/PicoNVIDIA/vlmdemo.git
-cd vlmdemo/hermes-omni-demo
+git clone https://github.com/brevdev/nemoclaw-demos.git
+cd nemoclaw-demos/hermes-omni-demo
 
 # 3. onboard a sandbox (interactive — pick name "my-hermes", model "1", accept presets)
 nemoclaw onboard --agent hermes
 
 # 4. configure the sandbox: switch to Omni, apply policy, install skills
 openshell inference set --provider nvidia-prod \
-    --model private/nvidia/nemotron-3-nano-omni-reasoning-30b-a3b
+    --model nvidia/nemotron-3-nano-omni-30b-a3b-reasoning
 SANDBOX=my-hermes bash scripts/setup.sh
 
 # 5. build the UI and start the server
@@ -87,8 +98,8 @@ openshell --version
 Expected:
 
 ```
-nemoclaw v0.0.16
-openshell 0.0.26
+nemoclaw v0.x.y
+openshell 0.x.y
 ```
 
 ### Part 2 — Onboard a sandbox
@@ -139,11 +150,11 @@ The onboarding wizard only offers Super 120B. We need Omni so Hermes can handle 
 # 1. The gateway route — this is what actually executes calls
 openshell inference set \
     --provider nvidia-prod \
-    --model private/nvidia/nemotron-3-nano-omni-reasoning-30b-a3b
+    --model nvidia/nemotron-3-nano-omni-30b-a3b-reasoning
 
 # 2. Hermes's in-sandbox config — controls the TUI banner display
 openshell sandbox exec -n my-hermes -- bash -c \
-    "sed -i 's|nvidia/nemotron-3-super-120b-a12b|nvidia/nemotron-3-nano-omni-reasoning-30b-a3b|' \
+    "sed -i 's|nvidia/nemotron-3-super-120b-a12b|nvidia/nemotron-3-nano-omni-30b-a3b-reasoning|' \
      /sandbox/.hermes-data/config.yaml"
 
 # 3. Host-side metadata — controls `nemoclaw list` output
@@ -151,7 +162,7 @@ python3 -c "
 import json, pathlib
 p = pathlib.Path.home() / '.nemoclaw' / 'sandboxes.json'
 d = json.load(open(p))
-d['sandboxes']['my-hermes']['model'] = 'nvidia/nemotron-3-nano-omni-reasoning-30b-a3b'
+d['sandboxes']['my-hermes']['model'] = 'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning'
 json.dump(d, open(p, 'w'), indent=4)
 "
 ```
@@ -167,7 +178,7 @@ Expected:
 ```
 Gateway inference:
   Provider: nvidia-prod
-  Model:    private/nvidia/nemotron-3-nano-omni-reasoning-30b-a3b
+  Model:    nvidia/nemotron-3-nano-omni-30b-a3b-reasoning
 ```
 
 ```bash
@@ -178,7 +189,7 @@ Expected:
 
 ```
 my-hermes
-  model: nvidia/nemotron-3-nano-omni-reasoning-30b-a3b  provider: nvidia-prod
+  model: nvidia/nemotron-3-nano-omni-30b-a3b-reasoning  provider: nvidia-prod
 ```
 
 If you skip step 2 or 3, the model name in `nemoclaw list` and the Hermes TUI banner will lie about what's actually running. The gateway route (step 1) is what determines real behavior; steps 2 and 3 are display-only.
@@ -186,8 +197,8 @@ If you skip step 2 or 3, the model name in `nemoclaw list` and the Hermes TUI ba
 ### Part 4 — Clone the cookbook, set the SANDBOX env var
 
 ```bash
-git clone https://github.com/PicoNVIDIA/vlmdemo.git
-cd vlmdemo/hermes-omni-demo
+git clone https://github.com/brevdev/nemoclaw-demos.git
+cd nemoclaw-demos/hermes-omni-demo
 export SANDBOX=my-hermes
 ```
 
@@ -306,7 +317,7 @@ If you see this, the gateway → Omni path is healthy.
 bash scripts/start.sh
 ```
 
-The script checks the sandbox is Ready, builds the UI if `ui/dist` is missing, makes sure the server's Python deps are installed, and runs uvicorn on port 8765. The same uvicorn serves both the API (`/api/*`) and the built React app (`/`).
+The script checks the sandbox is Ready, verifies host helpers (`ffmpeg`, `ffprobe`, `pdftoppm`, `lsof`), builds the UI if `ui/dist` is missing, creates a local Python virtualenv at `.venv`, installs the server's Python deps there, and runs uvicorn on port 8765. The same uvicorn serves both the API (`/api/*`) and the built React app (`/`).
 
 You should see:
 
@@ -334,12 +345,14 @@ npm install
 npm run build
 cd ..
 
-# install server deps
+# install server deps in a local venv (avoids system Python / PEP 668)
+python3 -m venv .venv
+. .venv/bin/activate
 pip install -r server/requirements.txt
 
 # run the server
 cd server
-SANDBOX=my-hermes uvicorn server:app --host 0.0.0.0 --port 8765
+SANDBOX=my-hermes python -m uvicorn server:app --host 0.0.0.0 --port 8765
 ```
 
 Open `http://localhost:8765`. You should see:
