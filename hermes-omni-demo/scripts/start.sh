@@ -59,6 +59,32 @@ if (( ${#missing[@]} > 0 )); then
     exit 1
 fi
 
+# ── 0b. Brev / corporate-proxy Docker reachability ──
+# Some Brev images and corporate networks ship Docker with an HTTP_PROXY
+# env var that breaks registry pulls silently (curl works, only Docker
+# is broken). The sandbox onboard would then sit at "Pulling image..."
+# for a long time before failing cryptically. Surface it now.
+if command -v docker >/dev/null 2>&1; then
+    if ! timeout 10 docker info >/dev/null 2>&1; then
+        echo "✗ docker daemon not reachable. Start Docker, then re-run." >&2
+        exit 1
+    fi
+    docker_proxy=$(systemctl show docker --property=Environment 2>/dev/null \
+                   | grep -Eo '(HTTP_PROXY|HTTPS_PROXY)=[^[:space:]]+' || true)
+    if [[ -n "$docker_proxy" && "$docker_proxy" =~ gcp/ ]]; then
+        echo "✗ Docker has a broken proxy set: $docker_proxy" >&2
+        echo "  Some Brev images ship with HTTP_PROXY=gcp/ which breaks all registry pulls." >&2
+        echo "  Drop-in fix:" >&2
+        echo "    sudo mkdir -p /etc/systemd/system/docker.service.d" >&2
+        echo "    sudo bash -c 'cat > /etc/systemd/system/docker.service.d/override.conf <<EOF" >&2
+        echo "    [Service]" >&2
+        echo "    Environment=" >&2
+        echo "    EOF'" >&2
+        echo "    sudo systemctl daemon-reload && sudo systemctl restart docker" >&2
+        exit 1
+    fi
+fi
+
 # ── 1. sandbox Ready? ──
 # `nemoclaw status` colors its output with ANSI escapes that sit between
 # "Phase:" and "Ready", so strip them before matching.

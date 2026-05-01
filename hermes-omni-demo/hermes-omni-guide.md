@@ -56,7 +56,7 @@ Use your distro's equivalent for `ffmpeg`, `poppler-utils`, `lsof`, and the Pyth
 
 ---
 
-## Quickstart (5 commands, ~5 min)
+## Quickstart (6 steps, ~6 min)
 
 If you've already got NemoClaw installed, this is the short version. The longer walkthrough below explains each step.
 
@@ -76,7 +76,18 @@ openshell inference set --provider nvidia-prod \
     --model nvidia/nemotron-3-nano-omni-30b-a3b-reasoning
 SANDBOX=my-hermes bash scripts/setup.sh
 
-# 5. build the UI and start the server
+# 5. smoke test — proves gateway → Omni works before bringing up the UI
+ffmpeg -y -f lavfi -i "testsrc=duration=10:size=320x240:rate=15" \
+       -f lavfi -i "sine=frequency=440:duration=10" \
+       -c:v libx264 -pix_fmt yuv420p -shortest /tmp/smoke.mp4
+openshell sandbox upload my-hermes /tmp/smoke.mp4 /tmp/
+openshell sandbox exec -n my-hermes -- python3 \
+    /sandbox/.hermes-data/workspace/omni-video-analyze.py \
+    /tmp/smoke.mp4 "what is in this video?"
+# Expected: a description of the test pattern + token count line.
+# If this fails, fix the gateway/network issue here — the UI won't help.
+
+# 6. build the UI and start the server
 SANDBOX=my-hermes bash scripts/start.sh
 ```
 
@@ -128,17 +139,18 @@ This step is interactive. You answer the prompts. **Do this manually — there i
 nemoclaw onboard --agent hermes
 ```
 
-When prompted:
+The wizard prompts vary by NemoClaw version (recent versions added Brave web-search and messaging-channel prompts on top of the original five). Rather than listing every prompt — which goes stale between releases — here are **only the answers that matter for this cookbook**:
 
-| Prompt | Answer |
+| Prompt asks about… | Answer |
 |---|---|
-| Inference provider | `1` (NVIDIA Endpoints) |
+| Inference provider | **NVIDIA Endpoints** (the option whose label says "NVIDIA Endpoints") |
 | API key | Paste your `nvapi-...` key |
-| Model | `1` (Nemotron 3 Super 120B — you'll swap this to Omni in Part 3) |
+| Model | **Nemotron 3 Super 120B** — you'll swap this to Omni in Part 3 |
 | Sandbox name | `my-hermes` |
-| Policy presets | `Y` (accept npm, pypi, huggingface, brew, brave) |
 
-The wizard takes ~1 min. At the end you'll see:
+For every *other* prompt the wizard shows (Brave Search API key, Telegram/Discord messaging channels, policy preset selection, etc.), **accept the default by hitting Enter or saying "no"/"skip"**. None of them are required for the demo, and you can wire them up later if you want.
+
+The wizard takes ~1–2 min depending on how many optional integrations you skip. At the end you'll see:
 
 ```
 ✓ Sandbox 'my-hermes' created
@@ -542,6 +554,20 @@ nemoclaw onboard --agent hermes
 # repeat Parts 3-5
 ```
 
+### After `nemoclaw rebuild`
+
+`nemoclaw <name> rebuild` is **destructive to in-sandbox state**: SOUL.md, the uploaded scripts, and any custom policy blocks are wiped and replaced with the defaults from the new sandbox image. After every rebuild, re-run the configuration step:
+
+```bash
+SANDBOX=my-hermes bash scripts/setup.sh
+```
+
+`setup.sh` re-applies the policy, re-installs both skills, re-uploads the scripts and SOUL.md, fixes the display labels, and verifies SOUL.md is visible to Hermes through `/sandbox/.hermes/SOUL.md`. If any step silently failed in the past, the verification step at the end now fails loudly — you won't be left with green checks and a broken sandbox.
+
+> **Why the rebuild wipes state:** the in-sandbox filesystem under `/sandbox/.hermes-data/` lives inside the sandbox container image, not on the host. A rebuild is a destroy-then-recreate of that image. There's no in-place "patch" mode that preserves your customizations — the cookbook treats rebuild as an "I want a clean state" operation followed by re-applying setup.sh.
+
+> **Don't rebuild without `NVIDIA_API_KEY` in env**: if the credential isn't reachable to the rebuild step, the recreate phase fails AFTER the destroy already ran, leaving you with no sandbox. Always `export NVIDIA_API_KEY=nvapi-...` before `nemoclaw rebuild`.
+
 ---
 
 ## Troubleshooting
@@ -565,6 +591,9 @@ nemoclaw onboard --agent hermes
 | `curl \| bash` install hangs or exits 1 over SSH | License prompt needs `/dev/tty`. Use `bash -s -- --yes-i-accept-third-party-software` (see Part 1). |
 | Hermes returns the previous file's analysis when you upload a new one | Multi-attachment session bleed. The UI now sends `new_session: true` automatically when a different file path is dropped — make sure you're running the latest UI build (`bash scripts/start.sh` will rebuild). If it still happens, click "New chat" before uploading. |
 | `start.sh` exits with "macOS is not supported" | The sandbox image is Linux-only. Run on Brev / DGX / any Docker-capable Linux box. |
+| `start.sh` exits with "Docker has a broken proxy set: HTTP_PROXY=gcp/" | Known broken Brev image. Run the override-conf snippet `start.sh` prints, then re-run. The proxy env breaks Docker registry pulls silently — not specific to this cookbook. |
+| Hermes loses its skills/SOUL after `nemoclaw rebuild` | Expected — rebuild wipes the in-sandbox filesystem. Re-run `SANDBOX=my-hermes bash scripts/setup.sh` to redeploy. See "After `nemoclaw rebuild`" in Day-2 ops. |
+| `nemoclaw rebuild` exits with "requires local env var 'NVIDIA_API_KEY'" and the sandbox is gone | Rebuild ran the destroy phase and then failed at recreate. `export NVIDIA_API_KEY=nvapi-...` and run `nemoclaw onboard --agent hermes` to recreate from scratch. |
 
 ## Tailing logs
 
