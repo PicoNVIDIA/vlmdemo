@@ -137,7 +137,13 @@ export const ChatPanel = forwardRef<ChatHandle, Props>(function ChatPanel(
 
   const send = (override?: string) => {
     const prompt = (override ?? input).trim();
-    if (!prompt || loading) return;
+    // Hard-block sending while a file upload is still in flight, so the
+    // server gets the new sandbox_path before the chat call composes its
+    // prompt. Without this, the user can attach a file and hit Enter
+    // before /api/upload completes, the prompt goes out with a stale
+    // (or null) video_path, and Hermes politely answers "no file
+    // attached" — confusing, since the file is visible in the UI.
+    if (!prompt || loading || uploading) return;
     setInput("");
     setLoading(true);
     const ts = Date.now();
@@ -333,8 +339,12 @@ export const ChatPanel = forwardRef<ChatHandle, Props>(function ChatPanel(
                 send();
               }
             }}
-            placeholder="Ask about a video, audio, or PDF — drag one in"
-            disabled={loading}
+            placeholder={
+              uploading
+                ? "Uploading… hold on a sec"
+                : "Ask about a video, audio, or PDF — drag one in"
+            }
+            disabled={loading || uploading}
           />
           {onVoice && (
             <AudioRecorder onTranscribed={onVoice} disabled={uploading} />
