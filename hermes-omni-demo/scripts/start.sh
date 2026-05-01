@@ -20,6 +20,20 @@
 # To stop:  bash scripts/stop.sh   (or Ctrl-C if you ran in foreground)
 set -euo pipefail
 
+# macOS preflight — the sandbox image is Linux-only and dies at build
+# step 51/57 ~5 minutes in with a symlink error on Darwin. Bail fast.
+if [[ "$(uname)" == "Darwin" ]]; then
+    echo "✗ macOS is not supported." >&2
+    echo "  The OpenShell sandbox image is Linux-only. Use a Linux host:" >&2
+    echo "    - Brev: https://brev.dev" >&2
+    echo "    - DGX Spark / DGX Station" >&2
+    echo "    - any Docker-capable Linux box" >&2
+    exit 1
+fi
+
+# Bootstrap nvm if present so this works over non-login SSH (cron, systemd).
+[ -s "$HOME/.nvm/nvm.sh" ] && \. "$HOME/.nvm/nvm.sh"
+
 SANDBOX="${SANDBOX:-my-hermes}"
 PORT="${PORT:-8765}"
 HOST="${HOST:-0.0.0.0}"

@@ -68,6 +68,17 @@ python3 /sandbox/.hermes-data/workspace/omni-video-analyze.py /tmp/video.mp4 "Wh
 ```
 Do NOT answer "the name wasn't in the previous analysis." Each question = one fresh call.
 
+### When the user uploads a NEW file (different from any prior attachment)
+
+**ALWAYS run the analyzer on the new file.** The new file is a different `/tmp/upload-...` path than any earlier attachment in the session. Do NOT answer from prior session context — that produces confidently-wrong answers about the wrong file.
+
+If the user just dropped in `/tmp/upload-NEW.mp4` and asks "what's happening?", you MUST run:
+```bash
+python3 /sandbox/.hermes-data/workspace/omni-video-analyze.py /tmp/upload-NEW.mp4 "what's happening in this clip?"
+```
+
+Even if the path looks similar to an earlier upload, treat each distinct `/tmp/upload-<uuid>` path as a fresh file requiring a fresh analyzer invocation. The user will explicitly attach the new file before asking — that means it's the new subject, not a continuation of the old one.
+
 ### When looking up terms
 
 - **Infer the domain from the video content** and always pass `--context "DOMAIN"` to avoid Wikipedia picking the wrong article. Examples:

@@ -350,6 +350,11 @@ async def chat(req: ChatRequest):
         emitted_any = False
         session_id_emitted = False
         session_re = re.compile(rb"Session:\s+(\S+)")
+        # Tail buffer — when Hermes emits no parseable answer we surface the
+        # last ~20 raw lines so the user can see *why* in the UI instead of
+        # being told to "see backend log". Bounded to avoid unbounded growth.
+        from collections import deque
+        tail = deque(maxlen=20)
 
         try:
             while True:
@@ -359,6 +364,7 @@ async def chat(req: ChatRequest):
                 clean = clean_line(line)
                 if not clean:
                     continue
+                tail.append(clean.decode(errors="ignore"))
 
                 # Pick off the session id that hermes prints at the tail
                 if not session_id_emitted:
@@ -413,12 +419,17 @@ async def chat(req: ChatRequest):
                 if skill_m and skill_m.group(1) not in ("terminal", "execute_code"):
                     yield _sse({"type": "tool", "tool": skill_m.group(1)})
         finally:
-            await proc.wait()
+            rc = await proc.wait()
             if not emitted_any:
-                yield _sse({
-                    "type": "error",
-                    "error": "hermes returned no visible answer (see backend log)",
-                })
+                # Surface the actual hermes output (last ~20 lines) so the
+                # user can see *why* nothing came back, instead of being
+                # redirected to a backend log that doesn't usefully exist.
+                snippet = "\n".join(tail).strip()[-1500:]
+                msg = (
+                    f"Hermes produced no visible answer (exit {rc}). "
+                    "Last lines of output:\n\n" + (snippet or "(empty)")
+                )
+                yield _sse({"type": "error", "error": msg})
             yield _sse({"type": "done"})
 
     return StreamingResponse(

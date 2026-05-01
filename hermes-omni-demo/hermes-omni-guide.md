@@ -26,9 +26,9 @@ All five modalities run through one skill. The agent picks the tool. The sandbox
 
 ## Prerequisites
 
-### Ubuntu/Debian host packages
+> **macOS is not supported.** The OpenShell sandbox container image is Linux-only and dies at build step ~51/57 with a symlink error on Darwin. `scripts/start.sh` bails immediately if `uname` reports `Darwin`. Use a Linux host (Brev, DGX, or any Docker-capable Linux box).
 
-Install the media/PDF helpers before running the smoke tests or the browser UI:
+### Ubuntu/Debian host packages
 
 ```bash
 sudo apt-get update
@@ -37,15 +37,22 @@ sudo apt-get install -y ffmpeg poppler-utils lsof python3-venv
 
 `ffmpeg` provides both `ffmpeg` and `ffprobe`. The UI startup script checks these commands up front and creates a local Python virtualenv for server dependencies, which avoids Ubuntu 24.04's externally-managed Python (`PEP 668`) error.
 
+### Other Linux distros
+
+Use your distro's equivalent for `ffmpeg`, `poppler-utils`, `lsof`, and the Python `venv` module. RHEL/Fedora: `dnf install ffmpeg poppler-utils lsof python3` (you may need RPM Fusion or EPEL for `ffmpeg`). Arch: `pacman -S ffmpeg poppler lsof python`. Alpine: `apk add ffmpeg poppler-utils lsof python3`.
+
 | Requirement | Details |
 |---|---|
-| Linux host | Brev instance, DGX, or any Docker-capable Linux. No GPU needed. |
+| Linux host | Brev instance, DGX, or any Docker-capable Linux. No GPU needed. macOS not supported. |
 | Docker | Installed and running. |
 | NVIDIA API key | Starts with `nvapi-`, with Omni access. Get one at [build.nvidia.com](https://build.nvidia.com) → API Keys. |
-| `ffmpeg` / `ffprobe` | `sudo apt-get update && sudo apt-get install -y ffmpeg`. Needed for video upload transcoding, the synthetic test clip, and chunking long videos. |
-| `poppler-utils` | `sudo apt-get install -y poppler-utils`. Needed for PDF rendering (`pdftoppm`). |
-| Node 20+ and `npm` | Needed to build the web UI. |
-| Python 3.10+ with `venv` | For the FastAPI backend. On Ubuntu/Debian install `python3-venv`; `scripts/start.sh` creates a local `.venv` so system Python is not modified. |
+| `ffmpeg` / `ffprobe` | Distro package (`apt`/`dnf`/`pacman`/`apk`). Needed for video upload transcoding, the synthetic test clip, and chunking long videos. |
+| `poppler-utils` | Distro package. Needed for PDF rendering (`pdftoppm`). |
+| `lsof` | Distro package. Used by `start.sh` to check whether the demo port is already in use. |
+| Node 20+ and `npm` | Needed to build the web UI. The NemoClaw installer auto-installs Node via nvm if missing. |
+| Python 3.10+ with `venv` | For the FastAPI backend. `scripts/start.sh` creates a local `.venv` so system Python is not modified. |
+
+> **Tested with:** `nemoclaw v0.0.31`, `openshell 0.0.36`, Node 22, Python 3.11 on Ubuntu 22.04 (Brev cloud). Versions advance frequently; `nemoclaw --version` and `openshell --version` may show newer values than what's in the example output below.
 
 ---
 
@@ -101,6 +108,17 @@ Expected:
 nemoclaw v0.x.y
 openshell 0.x.y
 ```
+
+#### Installing over SSH (Brev / DGX / any non-interactive shell)
+
+The installer prints a third-party-software license prompt and reads from `/dev/tty`, so a bare `curl | bash` over a non-interactive SSH session silently exits 1. Pass `--yes-i-accept-third-party-software` to bypass the prompt:
+
+```bash
+curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash -s -- --yes-i-accept-third-party-software
+source ~/.bashrc
+```
+
+Use this form if you're running over `ssh -T`, `tmux`, `cron`, `systemd`, or any other context without an attached TTY.
 
 ### Part 2 — Onboard a sandbox
 
@@ -159,11 +177,17 @@ openshell sandbox exec -n my-hermes -- bash -c \
 
 # 3. Host-side metadata — controls `nemoclaw list` output
 python3 -c "
-import json, pathlib
+import json, pathlib, sys
 p = pathlib.Path.home() / '.nemoclaw' / 'sandboxes.json'
+if not p.exists():
+    sys.exit(f'host metadata not found at {p}; skipping (this is fine if you onboarded with a different NemoClaw layout)')
 d = json.load(open(p))
-d['sandboxes']['my-hermes']['model'] = 'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning'
+sandboxes = d.get('sandboxes', {})
+if 'my-hermes' not in sandboxes:
+    sys.exit(f'no sandbox named my-hermes in {p}; available: {sorted(sandboxes)}. Substitute the right name.')
+sandboxes['my-hermes']['model'] = 'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning'
 json.dump(d, open(p, 'w'), indent=4)
+print('updated', p)
 "
 ```
 
@@ -524,6 +548,8 @@ nemoclaw onboard --agent hermes
 
 | Symptom | Cause and fix |
 |---|---|
+| UI shows "Hermes produced no visible answer (exit 0)" | Run the skill directly to see the real error: `openshell sandbox exec -n my-hermes -- python3 /sandbox/.hermes-data/workspace/omni-video-analyze.py /tmp/<latest-upload> "test"` (find the upload with `openshell sandbox exec -n my-hermes -- ls -lt /tmp \| head -5`). The error message in the UI now includes the last 20 lines of Hermes output, which will tell you whether it's a payload-size, model-routing, or token-budget issue. |
+| UI shows "Hermes produced no visible answer (exit 1)" with no detail | Hermes itself crashed. Check that `/sandbox/.hermes/SOUL.md` exists and is readable (it's a symlink to `/sandbox/.hermes-data/memories/SOUL.md` in current sandbox images). Re-run `bash scripts/setup.sh` — its final step verifies SOUL is visible to Hermes. |
 | TUI banner / `nemoclaw list` shows Super 120B even after the swap | Display labels weren't updated. Re-run the two `sed`/`python3` commands in Part 3. The gateway route is correct; only the labels lie. |
 | `SSL EOF occurred in violation of protocol` from `omni-video-analyze.py` | Payload exceeded ~9 MB. Use `chunk-upload.sh` (Long Videos section), or trim with `ffmpeg -i big.mp4 -t 120 -c copy small.mp4`. |
 | `'NoneType' object has no attribute 'strip'` mid-chunked-run | Old script. Re-upload the v3 from `scripts/omni-video-analyze.py`. |
@@ -535,6 +561,10 @@ nemoclaw onboard --agent hermes
 | Port 8765 already in use when `start.sh` runs | Another server is already on that port. `bash scripts/stop.sh` to kill it, or set `PORT=8766` and re-run. |
 | UI loads but `/api/*` calls fail | The server didn't start cleanly. Check the terminal where `start.sh` is running — uvicorn errors will be visible there. |
 | `openshell sandbox upload DEST` made a directory instead of putting the file | Trailing slash matters. `upload SRC /tmp/` puts the file in `/tmp/`. `upload SRC /tmp` makes a directory called `/tmp`. |
+| `npm: command not found` when running `start.sh` over SSH or systemd | nvm is sourced from `~/.bashrc` only, which non-login shells don't read. The script now sources `~/.nvm/nvm.sh` at the top — make sure you're running the latest version of `scripts/start.sh`. |
+| `curl \| bash` install hangs or exits 1 over SSH | License prompt needs `/dev/tty`. Use `bash -s -- --yes-i-accept-third-party-software` (see Part 1). |
+| Hermes returns the previous file's analysis when you upload a new one | Multi-attachment session bleed. The UI now sends `new_session: true` automatically when a different file path is dropped — make sure you're running the latest UI build (`bash scripts/start.sh` will rebuild). If it still happens, click "New chat" before uploading. |
+| `start.sh` exits with "macOS is not supported" | The sandbox image is Linux-only. Run on Brev / DGX / any Docker-capable Linux box. |
 
 ## Tailing logs
 
